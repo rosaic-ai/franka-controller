@@ -18,9 +18,10 @@ class FrankaVC(gym.Env):
                  hz = 10,
                  img_dim=(480, 640), # H x W
                  start_gripper=0,
+                 config_robot=None
                  ):
         
-
+        # From robot_params
         self.resetpos = np.zeros(7)
         self.resetpos[:3] = np.array([0.5, 0.1, 0.2])
         self.reset_yaw=np.pi/2
@@ -43,8 +44,7 @@ class FrankaVC(gym.Env):
         self.ip = '127.0.0.1'
         self.url = 'http://'+self.ip+':5000/'
         
-        self.pose_limit = [0.30, 0.6, -0.30, 0.30, 0.015, 0.4]  # x, y, z의 최소값과 최대값
-
+        self.pose_limit = config_robot['control_params']['pose_limits']
         
         # Bouding box
         self.xyz_bounding_box = gym.spaces.Box(
@@ -166,11 +166,13 @@ class FrankaVC(gym.Env):
         x_min, x_max, y_min, y_max, z_min, z_max = self.pose_limit
         x, y, z = target_pose[:3]
 
+        # 각 축에 대해 제한을 적용
         x = max(x_min, min(x, x_max))
         y = max(y_min, min(y, y_max))
         z = max(z_min, min(z, z_max))
 
-        adjusted_pose = np.array([x, y, z] + target_pose[3:])
+        # 각 성분을 안전한 범위 내로 조정 후, 포즈 배열 재구성
+        adjusted_pose = np.concatenate([[x, y, z], target_pose[3:]])
         return adjusted_pose
     
     def move_to_pos(self, pos):
