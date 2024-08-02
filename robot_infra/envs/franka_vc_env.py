@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation as R
 class FrankaVC(gym.Env):
     def __init__(self, 
                  randomReset=np.zeros(6), 
-                 hz = 10,
+                 hz = 30,
                  img_dim=(480, 640), # H x W
                  start_gripper=0,
                  config_robot=None
@@ -101,7 +101,7 @@ class FrankaVC(gym.Env):
         #             'wrist_1': self.cap_wrist_1,
         #             'wrist_2': self.cap_wrist_2,}
         print("Initialized Franka")
-        if start_gripper==0:
+        if start_gripper==1:
             requests.post(self.url + 'open_gripper')
 
         self.img_queue = queue.Queue()
@@ -282,7 +282,6 @@ class FrankaVC(gym.Env):
     def get_ee_ft(self):
         """ Request the current robot state """
         response = requests.post(self.url + 'getforce')
-        response = requests.post(self.url + 'gettorque')
         state = response.json()
         return state
 

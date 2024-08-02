@@ -12,6 +12,7 @@ def get_argparser():
     parser.add_argument('--config_robot', type=str,
                         default='robot_infra/configs/robot_params.yaml',
                         help='PATH/TO/CONFIG/FILE/.yaml')
+    parser.add_argument('--reset', type=int, default=0, help="0:False, 1:True")
     return parser
 
 def setup_initial_pose(control):
@@ -37,28 +38,36 @@ def move_through_waypoints(control, curr_pose, target_pose, steps):
     
 
 def main():
+    # Get current end-effector pose
+    curr_ee_pose = control.get_ee_pose()
+    curr_ee_trans = curr_ee_pose['pose'][:3]
+    curr_ee_quat = curr_ee_pose['pose'][3:]
+
+    curr_force = control.get_ee_ft()
+    
+    initial_pose = setup_initial_pose(control)
+
+    # Update state and get next target pose and gripper state
+    target_pose, gripper_values, current_state = state_machine.update_state(curr_ee_trans, curr_ee_quat, curr_force)
+    
+    # Move to the next waypoint calculated by the state machine
+    move_through_waypoints(control, initial_pose, target_pose, 20)
+    control.set_gripper(gripper_values)
+    
+    time.sleep(0.1)
+
+if __name__ == "__main__":
+    
     parser = get_argparser()
     args = parser.parse_args()
     config_robot = Config(args.config_robot).get_config()
     
-    # Define franka controller
+    # Define the Franka controller
     control = FrankaVC(config_robot=config_robot)
-    
-    # Get current end-effector pose
-    curr_ee_pose = control.get_ee_pose()
-    curr_ee_pos = curr_ee_pose['pose'][:3]
-    curr_ee_quat = curr_ee_pose['pose'][3:]
-    
-    # Get initial pose for calculate waypoint
-    initial_pose = setup_initial_pose(control)
-    
-    # Set state machine for control
     state_machine = RobotStateMachine(device='cpu', config_robot=config_robot)
-    target_pose, gripper_values, current_state = state_machine.update_state(curr_ee_pos, curr_ee_quat)
     
-    # Move to target pose & gripper value
-    move_through_waypoints(control, initial_pose, target_pose, 10)
-    control.set_gripper(gripper_values)
+    state_machine.reset()
     
-if __name__ == "__main__":
-    main()
+    if not args.reset:
+        while True:
+            main()

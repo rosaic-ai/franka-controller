@@ -1,11 +1,20 @@
-state_pos_offsets:
-  approach_peg: [0.0, 0.0, 0.04]
-  lower_to_peg: [0.0, 0.0, 0.02] #0.028
-  move_to_hole_above: [0.0, 0.0, 0.063] #0.063, 0.09
-  aligning_with_hole: [0.0, 0.0, 0.032] #0.032
-  lower_to_hole: [0.0, 0.0, 0.0165] #0.0275 / 0.019 / 0.016
-  match_to_hole: [0.0, 0.0, 0.0165] #0.019 / 0.016
-  insert_to_hole: [0.0, 0.0, 0.0115]
+state_target_trans:
+  reset_pose        : [0.3, 0.0, 0.4]
+  approach_to_peg   : [0.4, 0.0, 0.3]
+  lower_to_peg      : [0.4, 0.0, 0.20]    #0.028
+  move_to_hole_above: [0.0, 0.0, 0.063]  #0.063, 0.09
+  lower_to_hole     : [0.0, 0.0, 0.0165] #0.0275 / 0.019 / 0.016
+  match_to_hole     : [0.0, 0.0, 0.0165] #0.019 / 0.016
+  insert_to_hole    : [0.0, 0.0, 0.0115]
+  contact           : [0.4, 0.0, 0.165]
+  contact_and_move  : [0.4, 0.1, 0.165]
+
+state_target_ori:
+  reset_euler      : [0.0, 0.0, 0.0]
+  target_euler      : [0.0, 0.0, 0.0]
+
+state_pose_thres:
+  trans_thres: 0.003
 
 control_params:
   pose_limits: [0.30, 0.6, -0.30, 0.30, 0.015, 0.4]
