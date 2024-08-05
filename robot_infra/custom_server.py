@@ -340,7 +340,7 @@ def main(_):
     ## Route for decreasing controller gain
     @webapp.route("/compliance_mode", methods=["POST"])
     def compliance_mode():
-        reconf_client.update_configuration({"translational_stiffness": 2000}) #2000
+        reconf_client.update_configuration({"translational_stiffness": 500}) #2000
         reconf_client.update_configuration({"translational_damping": 80}) #80
         reconf_client.update_configuration({"rotational_stiffness": 150}) #150
         reconf_client.update_configuration({"rotational_damping": 7}) # 7

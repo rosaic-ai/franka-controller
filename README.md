@@ -83,3 +83,8 @@ realtime_config: ignore
     ```bash
     python vc_controller.py
     ```
+3. Using 3D space mouse for robot action data sampling
+    3D space mouse interface code
+    ```bash
+    python robot_infra/spacemouse/spacemouse_custom.py
+    ```
