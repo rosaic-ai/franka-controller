@@ -47,37 +47,40 @@ if __name__ == '__main__':
     control = FrankaVC(config_robot=config_robot, start_gripper=0)
     spacemouse = SpaceMouseExpert()
 
-    translation_speed = 0.05    # cm
-    rotation_speed = 10     # unit
-    scaled_delta_action = np.zeros(7)
-    robot_action = np.zeros(7)
-    current_state = np.array([3.06520925e-01, -4.70307095e-05, 4.86262991e-01, -3.01096496e-04
-                              ,1.37753279e-03, 2.06878850e-04, 9.99998984e-01])
+    translation_speed = 0.02    # cm
+    rotation_speed = 0.1     # unit
+    da = np.zeros(7)            # delta action
+    current_state = np.array([3.06520925e-01, -4.70307095e-05, 4.86262991e-01, -3.01096496e-04,
+                            1.37753279e-03, 2.06878850e-04, 9.99998984e-01])
+    control.move_to_pos(current_state)
+    
+    updated_state = current_state
     while True:
         # 3d mouse
         mouse_action, buttons = spacemouse.get_action()
-        # print(f"Spacemouse action: {action}, buttons: {buttons}")
+        print(f"Spacemouse action: {mouse_action}, buttons: {buttons}")
 
         # translation
-        scaled_delta_action[:3] = mouse_action[:3] * translation_speed
+        da[:3] = mouse_action[:3] * translation_speed
 
         # rotation
-        mouse_action[4] *= -1
-        scaled_delta_action[3:] = euler_2_quat(mouse_action[3:])
-        scaled_delta_action[6] = rotation_speed
+        mouse_action[5] *= -1
+        da[3:] = euler_2_quat(mouse_action[3:])
+        da[6] = rotation_speed
         
-        # current robot state
-        current_state = np.array(control.get_ee_pose()['pose'])
+        
         
         # panda action(7-DoF) - translation(+), rotation(*)
-        robot_action[:3] = current_state[:3] + scaled_delta_action[:3]
-        robot_action[3:] = quaternion_multiply(current_state[3:], scaled_delta_action[3:])
-        print(robot_action)
+        updated_state[:3] += da[:3]
+        updated_state[3:] = quaternion_multiply(updated_state[3:], da[3:])
         
-        control.move_to_pos(robot_action)
+        control.move_to_pos(updated_state)
         if buttons[0]:
             control.close_gripper()
         elif buttons[1]:
             control.open_gripper()
 
+ 
         time.sleep(0.1)
+
+    

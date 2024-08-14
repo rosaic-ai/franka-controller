@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation as R
 class FrankaVC(gym.Env):
     def __init__(self, 
                  randomReset=np.zeros(6), 
-                 hz = 30,
+                 hz = 15,
                  img_dim=(480, 640), # H x W
                  start_gripper=0,
                  config_robot=None
@@ -100,14 +100,13 @@ class FrankaVC(gym.Env):
         #             'side_2': self.cap_side_2,
         #             'wrist_1': self.cap_wrist_1,
         #             'wrist_2': self.cap_wrist_2,}
-        print("Initialized Franka")
-        if start_gripper==1:
-            requests.post(self.url + 'open_gripper')
-
+        # print("Initialized Franka")
+        # if start_gripper==1:
+        #     requests.post(self.url + 'open_gripper')
+            
         self.img_queue = queue.Queue()
         # self.displayer = ImageDisplayer(self.img_queue)
         # self.displayer.start()
-
 
     def recover(self):
         requests.post(self.url + 'clearerr')
@@ -130,56 +129,44 @@ class FrankaVC(gym.Env):
         self.gripper_dist = np.array(ps['gripper'])
 
 
-    def set_gripper(self, position):
-        if position != self.currgrip:
-            if position == 1:
-                st = 'close_gripper'
-                self.currgrip = 1
-            else:
-                st = 'open_gripper'
-                self.currgrip = 0
-        else:
-            return
+    # def set_gripper(self, position):
+    #     if position != self.currgrip:
+    #         if position == 1:
+    #             st = 'close_gripper'
+    #             self.currgrip = 1
+    #         else:
+    #             st = 'open_gripper'
+    #             self.currgrip = 0
+    #     else:
+    #         return
 
-        ### IMPORTANT, IF FRANKA GRIPPER GETS OPEN/CLOSE COMMANDS TOO QUICKLY IT WILL FREEZE
-        delta = time.time() - self.lastsent
-        time.sleep(max(0, 1 - delta))
+    #     ### IMPORTANT, IF FRANKA GRIPPER GETS OPEN/CLOSE COMMANDS TOO QUICKLY IT WILL FREEZE
+    #     delta = time.time() - self.lastsent
+    #     time.sleep(max(0, 1 - delta))
 
-        requests.post(self.url + st)
-        if st == 'close_gripper':
-            time.sleep(1.2)
-        else:
-            time.sleep(0.6)
-        self.lastsent = time.time()
+    #     requests.post(self.url + st)
+    #     if st == 'close_gripper':
+    #         time.sleep(1.2)
+    #     else:
+    #         time.sleep(0.6)
+    #     self.lastsent = time.time()
 
-
-    # def clip_safety_box(self, pose):
-    #     pose[:3] = np.clip(pose[:3], self.xyz_bounding_box.low, self.xyz_bounding_box.high)
-    #     euler = Rotation.from_quat(pose[3:]).as_euler('xyz')
-    #     old_sign = np.sign(euler[0])
-    #     euler[0] = np.clip(euler[0]*old_sign, self.rpy_bounding_box.low[0], self.rpy_bounding_box.high[0]) * old_sign
-    #     euler[1:] = np.clip(euler[1:], self.rpy_bounding_box.low[1:], self.rpy_bounding_box.high[1:])   
-    #     pose[3:] = Rotation.from_euler('xyz', euler).as_quat()
-    #     return pose
     
     def ensure_within_limits(self, target_pose):
         x_min, x_max, y_min, y_max, z_min, z_max = self.pose_limit
         x, y, z = target_pose[:3]
 
-        # 각 축에 대해 제한을 적용
         x = max(x_min, min(x, x_max))
         y = max(y_min, min(y, y_max))
         z = max(z_min, min(z, z_max))
 
-        # 각 성분을 안전한 범위 내로 조정 후, 포즈 배열 재구성
         adjusted_pose = np.concatenate([[x, y, z], target_pose[3:]])
         return adjusted_pose
     
     def move_to_pos(self, pos):
         start_time = time.time()
         safe_pos = self.ensure_within_limits(pos)
-
-        self._send_pos_command(self.ensure_within_limits(safe_pos))
+        self._send_pos_command(safe_pos)
         # self._send_pos_command(pos)
         dl = time.time() - start_time
         time.sleep(max(0, (1.0 / self.hz) - dl))
@@ -348,28 +335,45 @@ class FrankaVC(gym.Env):
                 count += 1
         return count<50
 
-    def reset(self, jpos=None, gripper=0, require_input=True):
-        requests.post(self.url+ 'precision_mode')
-        self.set_gripper(gripper)
-        self.update_currpos()
-        if jpos == None:
-            jpos = (np.abs(self.q[0])>0.3)
+    # def reset(self, jpos=None, gripper=0, require_input=True):
+    #     requests.post(self.url+ 'precision_mode')
+    #     self.set_gripper(gripper)
+    #     self.update_currpos()
+    #     if jpos == None:
+    #         jpos = (np.abs(self.q[0])>0.3)
 
-        success = self.go_to_rest(jpos=jpos)
-        self.curr_path_length = 0
-        self.recover()
-        if jpos==True:
-            self.go_to_rest(jpos=False)
-            self.recover()
+    #     success = self.go_to_rest(jpos=jpos)
+    #     self.curr_path_length = 0
+    #     self.recover()
+    #     if jpos==True:
+    #         self.go_to_rest(jpos=False)
+    #         self.recover()
 
-        if require_input:
-            input('Reset Environment, Press Enter Once Complete: ')
-        self.update_currpos()
-        # self.last_quat = self.currpos[3:]
-        o = self._get_obs()
-        requests.post(self.url+ 'compliance_mode')
+    #     if require_input:
+    #         input('Reset Environment, Press Enter Once Complete: ')
+    #     self.update_currpos()
+    #     # self.last_quat = self.currpos[3:]
+    #     o = self._get_obs()
+    #     requests.post(self.url+ 'compliance_mode')
 
         return o
+    
+    def open_gripper(self):
+        """ Open the gripper. """
+        requests.post(self.url + 'open_gripper')
+        self.currgrip = 0
+        
+    def close_gripper(self):
+        """ Close the gripper and ensure the command is not sent too frequently. """
+        # Ensure at least 1 second delay between commands
+        delta = time.time() - self.lastsent
+        time.sleep(max(0, 1 - delta))
+        # Send the request to close the gripper
+        requests.post(self.url + 'close_gripper')
+        time.sleep(1.2)
+        # Update the last sent time
+        self.lastsent = time.time()
+        self.currgrip = 1
     
     def precision_mode(self):
         requests.post(self.url+ 'precision_mode')
@@ -453,3 +457,4 @@ class FrankaVC(gym.Env):
     def close(self):
         [cap.close() for cap in self.cap.items]
         self.displayer.join()
+        

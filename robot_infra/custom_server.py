@@ -179,11 +179,11 @@ class FrankaServer:
     def close(self):
         print("close")
         grasp = GraspActionGoal()
-        grasp.goal.width= 0.01
-        grasp.goal.speed=0.3
+        grasp.goal.width= 0.02
+        grasp.goal.speed=0.15
         grasp.goal.epsilon.inner = 1
         grasp.goal.epsilon.outer = 1
-        grasp.goal.force = 130
+        grasp.goal.force = 100
         self.grippergrasppub.publish(grasp)
         return 'Closed'
 
@@ -191,7 +191,7 @@ class FrankaServer:
         print("open")
         msg = MoveActionGoal()
         msg.goal.width=FLAGS.gripper_dist
-        msg.goal.speed=0.3
+        msg.goal.speed=0.15
         self.grippermovepub.publish(msg)
         return 'Opened'
 
@@ -321,26 +321,21 @@ def main(_):
     ## Route for increasing controller gain
     @webapp.route("/precision_mode", methods=["POST"])
     def precision_mode():
-        reconf_client.update_configuration({"translational_stiffness": 2000}) #2000
-        reconf_client.update_configuration({"translational_damping": 80}) #80
-        reconf_client.update_configuration({"rotational_stiffness": 150}) #150
-        reconf_client.update_configuration({"rotational_damping": 7}) # 7
-        reconf_client.update_configuration({"translational_Ki": 10}) #10
-        reconf_client.update_configuration({"rotational_Ki": 0})
+        reconf_client.update_configuration({"translational_stiffness": 2000})
+        reconf_client.update_configuration({"translational_damping": 89})
+        reconf_client.update_configuration({"rotational_stiffness": 150})
+        reconf_client.update_configuration({"rotational_damping": 7})
+        reconf_client.update_configuration({"translational_Ki": 30})
+        reconf_client.update_configuration({"rotational_Ki": 10})
         for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-            # reconf_client.update_configuration({"translational_clip_" + direction: 0.1})
-            # reconf_client.update_configuration({"rotational_clip_"+ direction: 0.1})
-            
-            reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
-            reconf_client.update_configuration({"rotational_clip_"+ direction: 0.04})
-            
+            reconf_client.update_configuration({"translational_clip_" + direction: 0.1})
+            reconf_client.update_configuration({"rotational_clip_"+ direction: 0.1})
         return 'Precision'
         
-
     ## Route for decreasing controller gain
     @webapp.route("/compliance_mode", methods=["POST"])
     def compliance_mode():
-        reconf_client.update_configuration({"translational_stiffness": 500}) #2000
+        reconf_client.update_configuration({"translational_stiffness": 2000}) #2000
         reconf_client.update_configuration({"translational_damping": 80}) #80
         reconf_client.update_configuration({"rotational_stiffness": 150}) #150
         reconf_client.update_configuration({"rotational_damping": 7}) # 7

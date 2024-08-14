@@ -12,6 +12,7 @@ to panda robot action()
 
 from robot_infra.spacemouse.spacemouse_custom import SpaceMouseExpert
 from robot_infra.envs.franka_vc_env import FrankaVC
+from vc_controller import move_through_waypoints
 
 from robot_infra.utils.rotations import euler_2_quat
 
@@ -47,7 +48,7 @@ if __name__ == '__main__':
     control = FrankaVC(config_robot=config_robot, start_gripper=0)
     spacemouse = SpaceMouseExpert()
 
-    translation_speed = 0.05    # cm
+    translation_speed = 0.1    # cm
     rotation_speed = 10     # unit
     scaled_delta_action = np.zeros(7)
     robot_action = np.zeros(7)
@@ -74,10 +75,11 @@ if __name__ == '__main__':
         robot_action[3:] = quaternion_multiply(current_state[3:], scaled_delta_action[3:])
         print(robot_action)
         
-        control.move_to_pos(robot_action)
+        # control.move_to_pos(robot_action)
+        move_through_waypoints(control=control, curr_pose=current_state, target_pose=robot_action, steps=10)
         if buttons[0]:
             control.close_gripper()
         elif buttons[1]:
             control.open_gripper()
 
-        time.sleep(0.1)
+        # time.sleep(0.1)

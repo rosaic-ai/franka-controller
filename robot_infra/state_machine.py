@@ -10,6 +10,7 @@ from scipy.spatial.transform import Rotation as R
 from .envs.franka_vc_env import FrankaVC
 
 import sys
+from copy import deepcopy
 
 # 상태 정의
 class State(Enum):
@@ -35,6 +36,8 @@ class RobotStateMachine:
         self.state_pose_thres   = config_robot.get('state_pose_thres', {})
         self.control = FrankaVC(config_robot=config_robot)        
         self.current_state = State.APPROACH_PEG.value # Initial state
+        self.previous_state = None
+        self.gripper_state = None
         
     def calculate_distance(self, pos1, pos2):
         pos1 = np.array(pos1)
@@ -50,8 +53,17 @@ class RobotStateMachine:
     
     def reset(self):
         print("Resetting to initial state...")
-        self.control.precision_mode()
-        self.control.set_gripper(1)  # Assuming 1:open
+        self.control.compliance_mode()
+        curr_pos, curr_quat = self.get_curr_pose()
+        
+        # Extract 5cm
+        raised_pos = np.array(curr_pos)
+        raised_pos[2] += 0.05
+        raised_pose = np.concatenate([raised_pos, curr_quat])
+        self.control.move_to_pos(raised_pose)
+        time.sleep(1)
+        
+        self.gripper_state = 'close'
 
         self.target_trans = self.state_target_trans['reset_pose']
         self.target_euler = self.state_target_ori['reset_euler']
@@ -60,28 +72,33 @@ class RobotStateMachine:
         initial_pose = np.concatenate([self.target_trans, self.target_quat])
         self.control.move_to_pos(initial_pose)
         
-        time.sleep(2)
+        # time.sleep(2)
         print("Reset complete. Starting with APPROACH_PEG state.")
-        
+    
+    
+    def gripper_control(self, gripper_state='close'):
+        if self.control.currgrip == 0 and gripper_state == 'close':
+            self.control.close_gripper()
+        elif self.control.currgrip == 1 and gripper_state == 'open':
+            self.control.open_gripper()
+
     def update_state(self, curr_ee_trans, curr_ee_quat, curr_ft, config = None):
-        
+               
         ##################################
         ########## APPROACH_PEG ##########
         ##################################
         approach = self.current_state == State.APPROACH_PEG.value
         if approach:
             print("Approach to Peg")
-            self.control.precision_mode()
-            self.gripper_values = 0 # 0:open, 1:close
-            
+            self.control.compliance_mode()
             self.target_trans = self.state_target_trans['approach_to_peg']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
-            print(get_pose_error)
             if get_pose_error < self.state_pose_thres['trans_thres']:
-                self.current_state = State.LOWER_TO_PEG.value
+                self.current_state = State.LOWER_TO_PEG.value #MOVE_TO_HOLE_ABOVE, LOWER_TO_PEG
+
 
         ####################################
         ########### LOWER_TO_PEG ###########
@@ -92,29 +109,25 @@ class RobotStateMachine:
             self.target_trans = self.state_target_trans['lower_to_peg']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
-            self.gripper_values = 1 # 0:open, 1:close
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
 
             if get_pose_error < self.state_pose_thres['trans_thres']:
                 self.current_state = State.GRASP_PEG.value
               
+        
         ####################################
         ############ GRASP_PEG #############
         ####################################
         grasp_peg = self.current_state == State.GRASP_PEG.value
         if grasp_peg:
             print("Grasp Peg")
-            self.target_trans = self.state_target_trans['lower_to_peg']
-            self.target_euler = self.state_target_ori['target_euler']
-            self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
-            self.gripper_values = 1 # 0:open, 1:close
+            # self.gripper_state = 'close'
+            self.gripper_control(gripper_state='close')
+            time.sleep(2)
             
-            get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
-            
-            if get_pose_error < self.state_pose_thres['trans_thres']:
-                self.current_state = State.CONTACT.value
-              
+            # After the delay, transition to the next state
+            self.current_state = State.MOVE_TO_HOLE_ABOVE.value
             
         ####################################
         ######## MOVE_TO_HOLE_ABOVE ########
@@ -122,7 +135,14 @@ class RobotStateMachine:
         move_to_hole_above = self.current_state == State.MOVE_TO_HOLE_ABOVE.value
         if move_to_hole_above:
             print("Move to Hole Above")
-    
+            self.target_trans = self.state_target_trans['move_to_hole_above']
+            self.target_euler = self.state_target_ori['target_euler']
+            self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
+            
+            get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
+
+            if get_pose_error < self.state_pose_thres['trans_thres']:
+                self.current_state = State.LOWER_TO_HOLE.value
     
         ####################################
         ########### LOWER_TO_HOLE ##########
@@ -130,7 +150,21 @@ class RobotStateMachine:
         lower_to_hole = self.current_state == State.LOWER_TO_HOLE.value
         if lower_to_hole:
             print("Lower to Hole")
+            self.control.compliance_mode()
+            self.target_trans = self.state_target_trans['lower_to_hole']
+            self.target_euler = self.state_target_ori['target_euler']
+            self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
             
+            get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
+
+            curr_z_force = curr_ft['force'][2]
+
+            # Get distance between target pose, current pose
+            if curr_z_force > 2:
+                self.current_state = State.CONTACT_AND_MOVE.value 
+
+            # if get_pose_error < self.state_pose_thres['trans_thres']:
+            #     self.current_state = State.CONTACT_AND_MOVE.value
             
         ####################################
         ###### MOVE_TO_PREDICTED_POSE ######
@@ -189,16 +223,23 @@ class RobotStateMachine:
             print("Contact & Move")
             self.control.compliance_mode()
 
-            self.target_trans = self.state_target_trans['contact_and_move']
+            self.target_trans = self.state_target_trans['lower_to_hole']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
-            self.gripper_values = 1 # 1:open, 0:close
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
+            
+            # Add a small perturbation to target_trans
+            perturbation_size = 0.002  # 5mm
+            perturbation = np.random.normal(0, perturbation_size, 2)  # Perturbations for x, y axes
+            self.target_trans[:2] += perturbation  # Apply perturbation
+            print(curr_ee_trans[2])
+            if curr_ee_trans[2] < 0.235:
+                self.current_state = State.RELEASE_PEG.value 
 
             # Get distance between target pose, current pose
             # if get_pose_error < self.state_pose_thres['trans_thres']:
-                # self.current_state = State.GRASP_PEG.value 
+                # self.current_state = State.RELEASE_PEG.value 
         
         
-        return np.concatenate([self.target_trans, self.target_quat]), self.gripper_values, self.current_state
+        return np.concatenate([self.target_trans, self.target_quat]), self.current_state, self.gripper_state
