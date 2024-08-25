@@ -101,8 +101,8 @@ class FrankaVC(gym.Env):
         #             'wrist_1': self.cap_wrist_1,
         #             'wrist_2': self.cap_wrist_2,}
         # print("Initialized Franka")
-        # if start_gripper==1:
-        #     requests.post(self.url + 'open_gripper')
+        if start_gripper==1:
+            requests.post(self.url + 'open_gripper')
             
         self.img_queue = queue.Queue()
         # self.displayer = ImageDisplayer(self.img_queue)

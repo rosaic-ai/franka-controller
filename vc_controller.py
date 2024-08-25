@@ -50,8 +50,11 @@ def main():
     last_state = None
     waypoints = []
     start_pos = None
-    current_index = 0  # 웨이포인트의 현재 인덱스
+    current_index = 0
     last_target_pose = None
+    spiral_step = 0
+    loop_counter = 0  # 루프 카운터 추가
+
     while True:
         # Get current end-effector pose
         curr_ee_pose = control.get_ee_pose()
@@ -59,33 +62,43 @@ def main():
         curr_ee_quat = curr_ee_pose['pose'][3:]
 
         curr_force = control.get_ee_ft()
-        target_pose, current_state, gripper_state = state_machine.update_state(curr_ee_trans, curr_ee_quat, curr_force)
+        target_pose, current_state, gripper_state = state_machine.update_state(curr_ee_trans, curr_ee_quat, curr_force, spiral_step)
         
-        if last_target_pose is None or not np.array_equal(target_pose, last_target_pose):
-            start_pos = curr_ee_pose['pose'][:]
-            waypoints = cal_waypoints(start_pos, target_pose, 20)
-            current_index = 0
-            last_target_pose = target_pose
-            
-        current_index = move_to_waypoint(control, waypoints, gripper_state, current_index)
+        if loop_counter % 2 == 0:
+            if current_state == 11:
+                spiral_step += 1
+        loop_counter += 1
+        
+        if current_state == 11:
+            control.move_to_pos(target_pose)
+        else:
+            if last_target_pose is None or not np.array_equal(target_pose, last_target_pose):
+                start_pos = curr_ee_pose['pose'][:]
+                waypoints = cal_waypoints(start_pos, target_pose, 15)
+                current_index = 0
+                last_target_pose = target_pose
                 
+            current_index = move_to_waypoint(control, waypoints, gripper_state, current_index)
+                        
+    target_pose=model(observation)
+
 
 if __name__ == "__main__":
     
     parser = get_argparser()
     args = parser.parse_args()
     config_robot = Config(args.config_robot).get_config()
-    
+    if args.gripper == 'close':
+        start_gripper = 0
+    else:
+        start_gripper = 1
+        
     # Define the Franka controller
-    control = FrankaVC(config_robot=config_robot, hz=50, start_gripper=1) # if 1, keep close
+    control = FrankaVC(config_robot=config_robot, hz=30, start_gripper=start_gripper) # if 1, keep close
     state_machine = RobotStateMachine(device='cpu', config_robot=config_robot)
     
     if not args.reset:
         main()
     elif args.reset:
-        state_machine.reset()
-            
-    if control.currgrip == 0 and state_machine.gripper_state == 'close':
-        control.close_gripper()
-    elif control.currgrip == 1 and state_machine.gripper_state == 'open':
-        control.open_gripper()        
+        # state_machine.reset()
+        state_machine.reset_tmp()
