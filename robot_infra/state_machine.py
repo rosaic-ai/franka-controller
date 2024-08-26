@@ -270,14 +270,12 @@ class RobotStateMachine:
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
             
-            # 스파이럴 서치로 Perturbation 적용
-            center = self.target_trans[:2]  # x, y 좌표에서 중심점 설정
-            radius_increment = 0.00001  # 반지름 증가량 (1mm)
-            angle_increment = np.pi / 18  # 각도 증가량을 10도로 변경
+            center = self.target_trans[:2]
+            radius_increment = 0.00001  
+            angle_increment = np.pi / 18
             
             spiral_points = self.spiral_search(center, radius_increment, angle_increment, sprial_step)
             
-            # 첫 번째 스파이럴 서치 포인트를 사용하여 target_trans를 업데이트
             self.target_trans[:2] = spiral_points[0]
             
             

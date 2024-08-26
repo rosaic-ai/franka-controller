@@ -44,40 +44,49 @@ if __name__ == '__main__':
     parser = get_argparser()
     args = parser.parse_args()
     config_robot = Config(args.config_robot).get_config()
-    control = FrankaVC(config_robot=config_robot, start_gripper=0)
+    if args.gripper == 'close':
+        start_gripper = 0
+    else:
+        start_gripper = 1
+        
+    # Define the Franka controller
+    control = FrankaVC(config_robot=config_robot, hz=50, start_gripper=start_gripper) # if 1, keep close    
     spacemouse = SpaceMouseExpert()
 
-    translation_speed = 0.05    # cm
-    rotation_speed = 10     # unit
+    translation_speed = 0.02    # cm
+    rotation_speed = 0.07     # unit
     scaled_delta_action = np.zeros(7)
     robot_action = np.zeros(7)
-    current_state = np.array([3.06520925e-01, -4.70307095e-05, 4.86262991e-01, -3.01096496e-04
-                              ,1.37753279e-03, 2.06878850e-04, 9.99998984e-01])
+
+    initial_state = np.array(control.get_ee_pose()['pose'])
+
     while True:
         # 3d mouse
         mouse_action, buttons = spacemouse.get_action()
-        # print(f"Spacemouse action: {action}, buttons: {buttons}")
+        # print(f"Spacemouse action: {mouse_action}, buttons: {buttons}")
 
-        # translation
-        scaled_delta_action[:3] = mouse_action[:3] * translation_speed
+        # robot_action[:3] += mouse_action[:3] * translation_speed
+        
+        robot_action = initial_state.copy()
+        
+        robot_action[:3] += mouse_action[:3] * translation_speed
+        
+        mouse_action[3] *= rotation_speed
+        mouse_action[4] *= rotation_speed
+        mouse_action[5] *= -rotation_speed
+        scaled_delta_quat = euler_2_quat(mouse_action[3:6])
+        
+        robot_action[3:7] = quaternion_multiply(robot_action[3:7], scaled_delta_quat)
 
-        # rotation
-        mouse_action[4] *= -1
-        scaled_delta_action[3:] = euler_2_quat(mouse_action[3:])
-        scaled_delta_action[6] = rotation_speed
-        
-        # current robot state
-        current_state = np.array(control.get_ee_pose()['pose'])
-        
-        # panda action(7-DoF) - translation(+), rotation(*)
-        robot_action[:3] = current_state[:3] + scaled_delta_action[:3]
-        robot_action[3:] = quaternion_multiply(current_state[3:], scaled_delta_action[3:])
-        print(robot_action)
-        
+        # 로봇의 새로운 위치로 이동합니다.
         control.move_to_pos(robot_action)
+        
+        # 현재 상태를 업데이트 합니다.
+        initial_state = robot_action.copy()
+        
         if buttons[0]:
             control.close_gripper()
         elif buttons[1]:
             control.open_gripper()
 
-        time.sleep(0.1)
+        # time.sleep(0.1)

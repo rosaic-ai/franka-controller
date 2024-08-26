@@ -102,3 +102,10 @@ if __name__ == "__main__":
     elif args.reset:
         # state_machine.reset()
         state_machine.reset_tmp()
+
+
+# 추가해야할거
+# camera view 수정
+# Get image, ft, robot state from the environment
+# Model inference
+# Go to model output
