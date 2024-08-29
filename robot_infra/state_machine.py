@@ -7,7 +7,7 @@ import numpy as np
 from enum import Enum
 import time
 from scipy.spatial.transform import Rotation as R
-from .envs.franka_vc_env import FrankaVC
+from .envs.franka_vc_env import FrankaVC, GetImageThread, ImageDisplayer
 
 import sys
 from copy import deepcopy
@@ -38,7 +38,10 @@ class RobotStateMachine:
         self.current_state = State.APPROACH_PEG.value # Initial state
         self.previous_state = None
         self.gripper_state = None
-        
+        self.camera_thread = GetImageThread(serial_number='130322270132', dim=(848, 480), fps=15, depth=False)
+        displayer_thread = ImageDisplayer(self.camera_thread.img_queue)
+        displayer_thread.start()
+    
     def calculate_distance(self, pos1, pos2):
         pos1 = np.array(pos1)
         pos2 = np.array(pos2)
@@ -131,7 +134,9 @@ class RobotStateMachine:
             self.control.open_gripper()
 
     def update_state(self, curr_ee_trans, curr_ee_quat, curr_ft, sprial_step, config = None):
-               
+    
+        get_img = self.camera_thread.fetch_images()  # Fetch the latest image
+
         ##################################
         ########## APPROACH_PEG ##########
         ##################################
@@ -176,6 +181,7 @@ class RobotStateMachine:
             # After the delay, transition to the next state
             self.current_state = State.MOVE_TO_HOLE_ABOVE.value
             
+        
         ####################################
         ######## MOVE_TO_HOLE_ABOVE ########
         ####################################
@@ -190,6 +196,7 @@ class RobotStateMachine:
 
             if get_pose_error < self.state_pose_thres['trans_thres']:
                 self.current_state = State.LOWER_TO_HOLE.value
+    
     
         ####################################
         ########### LOWER_TO_HOLE ##########
@@ -278,13 +285,6 @@ class RobotStateMachine:
             
             self.target_trans[:2] = spiral_points[0]
             
-            
-            # print(spiral_points[0])
-            # # Add a small perturbation to target_trans
-            # perturbation_size = 0.001  # 5mm
-            # perturbation = np.random.normal(0, perturbation_size, 2)  # Perturbations for x, y axes
-            # self.target_trans[:2] += perturbation  # Apply perturbation
-            # print(curr_ee_trans[2])
             if curr_ee_trans[2] < 0.23:
                 self.current_state = State.RELEASE_PEG.value 
 

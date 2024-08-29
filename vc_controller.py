@@ -1,11 +1,15 @@
 import numpy as np
 import time
 import requests
-from scipy.spatial.transform import Rotation as R
-from robot_infra.envs.franka_vc_env import FrankaVC
-from robot_infra.state_machine import RobotStateMachine
+import cv2
 import argparse
 from modules.config import Config
+
+from scipy.spatial.transform import Rotation as R
+from robot_infra.envs.franka_vc_env import FrankaVC, GetImageThread, ImageDisplayer
+from robot_infra.state_machine import RobotStateMachine
+from robot_infra.camera.rs_capture import RSCapture
+from robot_infra.camera.video_capture import VideoCapture
 
 def get_argparser():
     parser = argparse.ArgumentParser(description="Control parameters for robot simulation.")
@@ -23,11 +27,10 @@ def lerp(start, end, t):
 def calculate_distance(start_pose, target_pose):
     return np.linalg.norm(np.array(target_pose) - np.array(start_pose))
 
-def cal_waypoints(start_pose, target_pose, steps, distance_threshold=0.1):
+def cal_waypoints(start_pose, target_pose, steps, distance_threshold=0.1):  
     waypoints = []
     distance = calculate_distance(start_pose, target_pose)
 
-    # 거리에 비례하여 t를 조절
     for i in range(steps):
         if distance > distance_threshold:
             t = i / (steps - 1)
@@ -79,8 +82,8 @@ def main():
                 last_target_pose = target_pose
                 
             current_index = move_to_waypoint(control, waypoints, gripper_state, current_index)
-                        
-    target_pose=model(observation)
+        
+        # get_img = camera_thread.fetch_images()  # Fetch the latest image
 
 
 if __name__ == "__main__":
@@ -96,6 +99,9 @@ if __name__ == "__main__":
     # Define the Franka controller
     control = FrankaVC(config_robot=config_robot, hz=30, start_gripper=start_gripper) # if 1, keep close
     state_machine = RobotStateMachine(device='cpu', config_robot=config_robot)
+    # camera_thread = GetImageThread(serial_number='130322270132', dim=(848, 480), fps=15, depth=False)
+    # displayer_thread = ImageDisplayer(camera_thread.img_queue)
+    # displayer_thread.start()
     
     if not args.reset:
         main()

@@ -50,7 +50,7 @@ if __name__ == '__main__':
         start_gripper = 1
         
     # Define the Franka controller
-    control = FrankaVC(config_robot=config_robot, hz=50, start_gripper=start_gripper) # if 1, keep close    
+    control = FrankaVC(config_robot=config_robot, hz=10, start_gripper=start_gripper) # if 1, keep close    
     spacemouse = SpaceMouseExpert()
 
     translation_speed = 0.02    # cm

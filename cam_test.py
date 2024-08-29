@@ -1,34 +1,24 @@
+import cv2
 import numpy as np
-import pyrealsense2 as rs                 # Intel RealSense cross-platform open-source API
+import pyrealsense2 as rs
 
 class RSCapture():
-    def get_device_serial_numbers(self):
-        devices = rs.context().devices
-        return [d.get_info(rs.camera_info.serial_number) for d in devices]
-  
-    def __init__(self, name, serial_number, dim = (640, 480), fps = 15, depth=False):
+    def __init__(self, name, serial_number, dim=(640, 480), fps=15, depth=False):
         self.name = name
-        assert serial_number in self.get_device_serial_numbers()
         self.serial_number = serial_number
         self.depth = depth
         self.pipe = rs.pipeline()
         self.cfg = rs.config()
         self.cfg.enable_device(self.serial_number)
         self.cfg.enable_stream(rs.stream.color, dim[0], dim[1], rs.format.bgr8, fps)
-        
         if self.depth:
             self.cfg.enable_stream(rs.stream.depth, dim[0], dim[1], rs.format.z16, fps)
         self.profile = self.pipe.start(self.cfg)
+        self.align = rs.align(rs.stream.color)
 
-        sensor_dep = self.profile.get_device().first_depth_sensor()
-        exp = sensor_dep.set_option(rs.option.exposure, 10000)
-        exp = sensor_dep.get_option(rs.option.exposure)
-
-        # Create an align object
-        # rs.align allows us to perform alignment of depth frames to others frames
-        # The "align_to" is the stream type to which we plan to align depth frames.
-        align_to = rs.stream.color
-        self.align = rs.align(align_to)
+    def get_device_serial_numbers(self):
+        devices = rs.context().devices
+        return [d.get_info(rs.camera_info.serial_number) for d in devices]
 
     def read(self):
         frames = self.pipe.wait_for_frames()
@@ -47,3 +37,21 @@ class RSCapture():
     def close(self):
         self.pipe.stop()
         self.cfg.disable_all_streams()
+
+# 카메라 생성 및 초기화
+camera = RSCapture(name='wrist_1', serial_number='130322270132', depth=False)
+
+try:
+    while True:
+        ret, frame = camera.read()
+        if ret:
+            cv2.imshow('RealSense', frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        else:
+            print("No frame available")
+except Exception as e:
+    print(e)
+finally:
+    camera.close()
+    cv2.destroyAllWindows()

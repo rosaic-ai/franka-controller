@@ -12,6 +12,41 @@ import requests
 import queue
 from scipy.spatial.transform import Rotation as R
 
+from ..camera.rs_capture import RSCapture
+from ..camera.video_capture import VideoCapture
+
+class ImageDisplayer(threading.Thread):
+    def __init__(self, queue):
+        super().__init__()
+        self.queue = queue
+        self.daemon = True
+
+    def run(self):
+        while True:
+            image = self.queue.get()
+            if image is None:
+                break
+            cv2.imshow('RealSense', image)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                cv2.destroyAllWindows()
+                break
+
+class GetImageThread:
+    def __init__(self, serial_number, dim=(848, 480), fps=15, depth=False):
+        self.cap = RSCapture(name='wrist_1', serial_number=serial_number, dim=dim, fps=fps, depth=depth)
+        self.img_queue = queue.Queue()
+        
+    def fetch_images(self):
+        ret, frame = self.cap.read()
+        if ret:
+            self.img_queue.put(frame)
+        return frame
+
+    def close(self):
+        self.cap.close()
+        self.img_queue.put(None)  # Signal to the displayer thread to stop
+    
+        
 class FrankaVC(gym.Env):
     def __init__(self, 
                  randomReset=np.zeros(6), 
@@ -20,7 +55,7 @@ class FrankaVC(gym.Env):
                  start_gripper=0,
                  config_robot=None
                  ):
-        
+
         # From robot_params
         self.resetpos = np.zeros(7)
         self.resetpos[:3] = np.array([0.5, 0.1, 0.2])
@@ -92,22 +127,9 @@ class FrankaVC(gym.Env):
                                 'gripper_dist': spaces.Box(-np.inf, np.inf, shape=(1,)),
                             })
 
-        # self.cap_wrist_1 = VideoCapture(RSCapture(name='wrist_1', serial_number='127122270350', depth=True))
-        # self.cap_wrist_2 = VideoCapture(RSCapture(name='wrist_2', serial_number='128422271851', depth=True))
-        # self.cap_side_1 = VideoCapture(RSCapture(name='side_1', serial_number='128422270679', depth=True))
-        # self.cap_side_2 = VideoCapture(RSCapture(name='side_2', serial_number='127122270146', depth=True))   
-        # self.cap = {'side_1': self.cap_side_1,
-        #             'side_2': self.cap_side_2,
-        #             'wrist_1': self.cap_wrist_1,
-        #             'wrist_2': self.cap_wrist_2,}
-        # print("Initialized Franka")
         if start_gripper==1:
             requests.post(self.url + 'open_gripper')
             
-        self.img_queue = queue.Queue()
-        # self.displayer = ImageDisplayer(self.img_queue)
-        # self.displayer.start()
-
     def recover(self):
         requests.post(self.url + 'clearerr')
         
@@ -128,30 +150,12 @@ class FrankaVC(gym.Env):
         self.dq[:] = np.array(ps['dq'])
         self.gripper_dist = np.array(ps['gripper'])
 
-
-    # def set_gripper(self, position):
-    #     if position != self.currgrip:
-    #         if position == 1:
-    #             st = 'close_gripper'
-    #             self.currgrip = 1
-    #         else:
-    #             st = 'open_gripper'
-    #             self.currgrip = 0
-    #     else:
-    #         return
-
-    #     ### IMPORTANT, IF FRANKA GRIPPER GETS OPEN/CLOSE COMMANDS TOO QUICKLY IT WILL FREEZE
-    #     delta = time.time() - self.lastsent
-    #     time.sleep(max(0, 1 - delta))
-
-    #     requests.post(self.url + st)
-    #     if st == 'close_gripper':
-    #         time.sleep(1.2)
-    #     else:
-    #         time.sleep(0.6)
-    #     self.lastsent = time.time()
-
-    
+    def close_all(self):
+        for cap in self.cap.values():
+            cap.close()
+        self.displayer.stop_signal = True
+        self.displayer.join()
+        
     def ensure_within_limits(self, target_pose):
         x_min, x_max, y_min, y_max, z_min, z_max = self.pose_limit
         x, y, z = target_pose[:3]
@@ -200,35 +204,6 @@ class FrankaVC(gym.Env):
         obs = self._get_obs()
         return obs, 0, done, {}
 
-
-
-    # def _get_im(self):
-    #     images = {}
-    #     for key, cap in self.cap.items():
-    #         try:
-    #             rgb, depth = cap.read()
-    #             images[key] = cv2.resize(rgb, (256, 256))
-    #             images[key + "_full"] = rgb
-    #             images[f"{key}_depth"] = depth
-    #         except queue.Empty:
-    #             input(f'{key} camera frozen. Check connect, then press enter to relaunch...')
-    #             cap.close()
-    #             if key == 'side_1':
-    #                 cap = RSCapture(name='side_1', serial_number='128422270679', depth=True)
-    #             elif key == 'side_2':
-    #                 cap = RSCapture(name='side_2', serial_number='127122270146', depth=True)
-    #             elif key == 'wrist_1':
-    #                 cap = RSCapture(name='wrist_1', serial_number='127122270350', depth=True)
-    #             elif key == 'wrist_2':
-    #                 cap = RSCapture(name='wrist_2', serial_number='128422271851', depth=True)
-    #             else:
-    #                 raise KeyError
-    #             self.cap[key] = VideoCapture(cap)
-    #             return self._get_im()
-
-    #     self.img_queue.put(images)
-    #     return images
-   
     def _get_state(self):
         state_observation = {
             'tcp_pose': self.currpos,
@@ -244,10 +219,13 @@ class FrankaVC(gym.Env):
         return state_observation
 
     # def _get_obs(self):
-    #     images = self._get_im()
+    #     """Retrieve observations composed of images and other state information."""
+    #     if not self.camera_thread.img_queue.empty():
+    #         image = self.camera_thread.img_queue.get()  # Get the latest image from the queue
+    #     else:
+    #         image = None  # No new image available
     #     state_observation = self._get_state()
-
-    #     return copy.deepcopy(images) | copy.deepcopy(state_observation)
+    #     return copy.deepcopy(image) | copy.deepcopy(state_observation)
 
     def _get_obs(self):
         state_observation = self._get_state()
