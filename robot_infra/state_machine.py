@@ -215,8 +215,7 @@ class RobotStateMachine:
         ####################################
         move_to_pred = self.current_state == State.MOVE_TO_PREDICTED_POSE.value
         if move_to_pred:
-            self.control.compliance_mode()
-            
+            print("Moving to predicted pose...")
 
         
         ####################################

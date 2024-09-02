@@ -14,8 +14,6 @@ from robot_infra.camera.video_capture import VideoCapture
 import logging
 import collections
 
-# logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
 last_camera_fetch_time = 0
 last_pose_fetch_time = 0
 last_force_fetch_time = 0
@@ -89,73 +87,56 @@ def _get_observation():
 
     return get_img, curr_ee_pose, curr_ee_trans, curr_ee_quat, curr_ee_ft, curr_joint_pos
 
-# def _get_observation():
-#     # Fetch the latest image
-#     get_img = camera_thread.fetch_images()
-    
-#     # Get current end-effector pose
-#     curr_ee_pose = control.get_ee_pose()
-#     curr_ee_trans = curr_ee_pose['pose'][:3]
-#     curr_ee_quat = curr_ee_pose['pose'][3:]
-    
-#     curr_force = control.get_ee_force()['force']  
-#     curr_torque = control.get_ee_torque()['torque']  
-#     force_array = np.array(curr_force)
-#     torque_array = np.array(curr_torque)
-#     curr_ee_ft = np.concatenate((force_array, torque_array))    
-    
-#     curr_joint_pos = control.get_joint_pos()
-
-#     return get_img, curr_ee_pose, curr_ee_ft, curr_joint_pos
-
 import time
 
-# def _get_observation_for_debugging():
-#     global last_camera_fetch_time, last_pose_fetch_time, last_force_fetch_time
+def _get_observation_for_debugging():
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    global last_camera_fetch_time, last_pose_fetch_time, last_force_fetch_time
 
-#     # Fetch the latest image
-#     start_time = time.time()
-#     get_img = camera_thread.fetch_images()
-#     if get_img.any():
-#         interval = start_time - last_camera_fetch_time
-#         camera_freq = 1 / interval if interval else 0
-#         last_camera_fetch_time = start_time
-#         logging.debug(f"Camera sampling frequency: {camera_freq} Hz")
+    # Fetch the latest image
+    start_time = time.time()
+    get_img = camera_thread.fetch_images()
+    if get_img.any():
+        interval = start_time - last_camera_fetch_time
+        camera_freq = 1 / interval if interval else 0
+        last_camera_fetch_time = start_time
+        logging.debug(f"Camera sampling frequency: {camera_freq} Hz")
 
-#     # Get current end-effector pose
-#     start_time = time.time()
-#     curr_ee_pose = control.get_ee_pose()
-#     if curr_ee_pose:
-#         interval = start_time - last_pose_fetch_time
-#         pose_freq = 1 / interval if interval else 0
-#         last_pose_fetch_time = start_time
-#         logging.debug(f"Pose sampling frequency: {pose_freq} Hz")
+    # Get current end-effector pose
+    start_time = time.time()
+    curr_ee_pose = control.get_ee_pose()
+    if curr_ee_pose:
+        interval = start_time - last_pose_fetch_time
+        pose_freq = 1 / interval if interval else 0
+        last_pose_fetch_time = start_time
+        logging.debug(f"Pose sampling frequency: {pose_freq} Hz")
 
-#     # Get current end-effector force
-#     start_time = time.time()
-#     curr_force = control.get_ee_force()['force']  
-#     curr_torque = control.get_ee_torque()['torque']  
-#     force_array = np.array(curr_force)
-#     torque_array = np.array(curr_torque)
+    # Get current end-effector force
+    start_time = time.time()
+    curr_force = control.get_ee_force()['force']  
+    curr_torque = control.get_ee_torque()['torque']  
+    force_array = np.array(curr_force)
+    torque_array = np.array(curr_torque)
     
-#     curr_ee_ft = np.concatenate((force_array, torque_array))
+    curr_ee_ft = np.concatenate((force_array, torque_array))
     
-#     if curr_ee_ft.any():
-#         interval = start_time - last_force_fetch_time
-#         force_freq = 1 / interval if interval else 0
-#         last_force_fetch_time = start_time
-#         logging.debug(f"Force sampling frequency: {force_freq} Hz")
+    if curr_ee_ft.any():
+        interval = start_time - last_force_fetch_time
+        force_freq = 1 / interval if interval else 0
+        last_force_fetch_time = start_time
+        logging.debug(f"Force sampling frequency: {force_freq} Hz")
     
-#     # Get current joint angles
-#     start_time = time.time()
-#     curr_joint_pos = control.get_joint_pos()
-#     if curr_joint_pos:
-#         interval = start_time - last_pose_fetch_time
-#         pose_freq = 1 / interval if interval else 0
-#         last_pose_fetch_time = start_time
-#         logging.debug(f"Joint sampling frequency: {pose_freq} Hz")
+    # Get current joint angles
+    start_time = time.time()
+    curr_joint_pos = control.get_joint_pos()
+    if curr_joint_pos:
+        interval = start_time - last_pose_fetch_time
+        pose_freq = 1 / interval if interval else 0
+        last_pose_fetch_time = start_time
+        logging.debug(f"Joint sampling frequency: {pose_freq} Hz")
     
-#     return get_img, curr_ee_pose, curr_ee_pose['pose'][:3], curr_ee_pose['pose'][3:], curr_ee_ft, curr_joint_pos
+    return get_img, curr_ee_pose, curr_ee_pose['pose'][:3], curr_ee_pose['pose'][3:], curr_ee_ft, curr_joint_pos
 
 
 def fetch_all_observation(get_img, curr_joint_pos, curr_contact, curr_pose):
@@ -172,14 +153,16 @@ def synchronize_data(observation_data):
     camera_data = observation_data['camera_data']    
     joint_data = observation_data['joint_data']
     contact_data = observation_data['contact_data']
+    pose_data = observation_data['pose_data']
 
     # Extract timestamps for each data type
     camera_timestamp = camera_data['timestamp']
     joint_timestamp = joint_data['timestamp']
     force_timestamp = contact_data['timestamp']
+    pose_timestamp = pose_data['timestamp']
 
     # Find the minimum time difference to synchronize data
-    timestamps = [camera_timestamp, joint_timestamp, force_timestamp]
+    timestamps = [camera_timestamp, joint_timestamp, force_timestamp, pose_timestamp]
     avg_timestamp = sum(timestamps) / len(timestamps)  # Calculate average timestamp
 
     # Find data entries closest to the average timestamp
@@ -187,15 +170,19 @@ def synchronize_data(observation_data):
 
     # Prepare the synchronized dataset
     synced_data = {}
-    if abs(camera_timestamp - closest_to_avg) < 0.05:  # 50 ms tolerance
+    if abs(camera_timestamp - closest_to_avg) < 0.05:
         synced_data['camera_data'] = camera_data['image']
     if abs(joint_timestamp - closest_to_avg) < 0.05:
         synced_data['joint_data'] = joint_data['joint']['q']
     if abs(force_timestamp - closest_to_avg) < 0.05:
         synced_data['contact_data'] = contact_data['contact']
+    if abs(pose_timestamp - closest_to_avg) < 0.05:
+        synced_data['pose_data'] = pose_data['pose']['pose']
 
     return synced_data
 
+def _model_inference(image_buffers, robot_data_buffers):
+    return None
     
 def main():
     last_state = None
@@ -228,28 +215,35 @@ def main():
         obs_with_timestamp = fetch_all_observation(get_img, curr_joint, curr_contact, curr_ee_pose)
         synced_obs = synchronize_data(obs_with_timestamp)
         
+        synced_img = synced_obs['camera_data']
         synced_contact = np.array(synced_obs['contact_data'])
         synced_joint = np.array(synced_obs['joint_data'])
-        synced_img = synced_obs['camera_data']
-                
-        target_pose, current_state, gripper_state = state_machine.update_state(curr_ee_trans, curr_ee_quat, curr_contact, spiral_step)
-        print(f"Current State: {State(current_state).name}")            
+        synced_pose = np.array(synced_obs['pose_data'])        
     
-        # # Move to predicted target pose
-        # if current_state == State.MOVE_TO_HOLE_ABOVE.value:
-        #     if loop_counter % 4 == 0:
-        #         image_buffers.append(synced_img)
-        #     robot_data_buffers.append((synced_contact, synced_joint))
+        if not manage_state_internally:
+            target_pose, current_state, gripper_state = state_machine.update_state(synced_pose[:3], synced_pose[3:], synced_contact, spiral_step)
+            print(f"Current State: {State(current_state).name}")
 
-        # if len(image_buffers) == sequence_length and len(robot_data_buffers) == step_num_image * sequence_length:
-        #     print("Model input ready")
-        
-        if loop_counter % 4 == 0:
             if current_state == State.CONTACT_AND_MOVE.value:
-                spiral_step += 1
+                manage_state_internally = True
+        else:
+            print("Managing state internally")
+            if current_state == State.CONTACT_AND_MOVE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
+                if loop_counter % 1 == 0:
+                    image_buffers.append(synced_img)
+                    robot_data_buffers.append((synced_contact, synced_joint))
+                    
+                if len(image_buffers) == sequence_length and len(robot_data_buffers) == step_num_image * sequence_length:
+                    print("Model input ready")
+                    pred_action = _model_inference(image_buffers, robot_data_buffers)
+                    ########################################################
+                    ############### ADD MODEL INFERENCE HERE ###############
+                    ########################################################
         
         if current_state == State.CONTACT_AND_MOVE.value:
             control.move_to_pos(target_pose)
+            if loop_counter % 4 == 0:
+                spiral_step += 1
         else:
             if last_target_pose is None or not np.array_equal(target_pose, last_target_pose):
                 start_pos = curr_ee_pose['pose'][:]
@@ -292,10 +286,6 @@ if __name__ == "__main__":
 
 # 추가해야할거
 # camera view 수정
-
-# 0830 todo
-# Get image, ft, robot state from the environment 전부 확인
-# 각각 observation sampling frequency 확인
 
 # Model inference
 # Go to model output
