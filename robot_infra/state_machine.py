@@ -38,9 +38,9 @@ class RobotStateMachine:
         self.current_state = State.APPROACH_PEG.value # Initial state
         self.previous_state = None
         self.gripper_state = None
-        self.camera_thread = GetImageThread(serial_number='130322270132', dim=(848, 480), fps=15, depth=False)
-        displayer_thread = ImageDisplayer(self.camera_thread.img_queue)
-        displayer_thread.start()
+        # self.camera_thread = GetImageThread(serial_number='130322270132', dim=(848, 480), fps=15, depth=False)
+        # displayer_thread = ImageDisplayer(self.camera_thread.img_queue)
+        # displayer_thread.start()
     
     def calculate_distance(self, pos1, pos2):
         pos1 = np.array(pos1)
@@ -132,17 +132,13 @@ class RobotStateMachine:
             self.control.close_gripper()
         elif self.control.currgrip == 1 and gripper_state == 'open':
             self.control.open_gripper()
-
-    def update_state(self, curr_ee_trans, curr_ee_quat, curr_ft, sprial_step, config = None):
     
-        get_img = self.camera_thread.fetch_images()  # Fetch the latest image
-
+    def update_state(self, curr_ee_trans, curr_ee_quat, curr_ft, sprial_step, config = None):
         ##################################
         ########## APPROACH_PEG ##########
         ##################################
         approach = self.current_state == State.APPROACH_PEG.value
         if approach:
-            print("Approach to Peg")
             self.control.compliance_mode()
             # self.gripper_control(gripper_state='open')
             self.target_trans = self.state_target_trans['approach_to_peg']
@@ -159,7 +155,6 @@ class RobotStateMachine:
         ####################################
         lower_to_peg = self.current_state == State.LOWER_TO_PEG.value
         if lower_to_peg:
-            print("Lower to Peg")
             self.target_trans = self.state_target_trans['lower_to_peg']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
@@ -175,7 +170,6 @@ class RobotStateMachine:
         ####################################
         grasp_peg = self.current_state == State.GRASP_PEG.value
         if grasp_peg:
-            print("Grasp Peg")
             self.gripper_control(gripper_state='close')
             time.sleep(2)
             # After the delay, transition to the next state
@@ -187,7 +181,6 @@ class RobotStateMachine:
         ####################################
         move_to_hole_above = self.current_state == State.MOVE_TO_HOLE_ABOVE.value
         if move_to_hole_above:
-            print("Move to Hole Above")
             self.target_trans = self.state_target_trans['move_to_hole_above']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
@@ -203,15 +196,13 @@ class RobotStateMachine:
         ####################################
         lower_to_hole = self.current_state == State.LOWER_TO_HOLE.value
         if lower_to_hole:
-            print("Lower to Hole")
             self.target_trans = self.state_target_trans['lower_to_hole']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
-
-            curr_z_force = curr_ft['force'][2]
-
+            curr_z_force = curr_ft[2]
+            
             # Get distance between target pose, current pose
             if curr_z_force > 2:
                 self.current_state = State.CONTACT_AND_MOVE.value 
@@ -224,8 +215,8 @@ class RobotStateMachine:
         ####################################
         move_to_pred = self.current_state == State.MOVE_TO_PREDICTED_POSE.value
         if move_to_pred:
-            print("Move to Pred Pose")
             self.control.compliance_mode()
+            
 
         
         ####################################
@@ -233,7 +224,6 @@ class RobotStateMachine:
         ####################################
         insert = self.current_state == State.INSERT_TO_HOLE.value
         if insert:
-            print("Insert!!!")
             self.control.compliance_mode()
 
 
@@ -242,7 +232,6 @@ class RobotStateMachine:
         ####################################
         release_peg = self.current_state == State.RELEASE_PEG.value
         if release_peg:
-            print("Success & Release Peg")
             self.gripper_values = 0 # 1:open, 0:close
         
         
@@ -251,7 +240,6 @@ class RobotStateMachine:
         ###################################
         contact = self.current_state == State.CONTACT.value
         if contact:
-            print("Contact")
             self.target_trans = self.state_target_trans['contact']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
@@ -270,7 +258,6 @@ class RobotStateMachine:
         ####################################
         contact_and_move = self.current_state == State.CONTACT_AND_MOVE.value
         if contact_and_move:
-            print("Contact & Move")
             self.target_trans = self.state_target_trans['contact_and_move']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
@@ -278,14 +265,14 @@ class RobotStateMachine:
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
             
             center = self.target_trans[:2]
-            radius_increment = 0.00001  
-            angle_increment = np.pi / 18
+            radius_increment = 0.000001  # 반경 증가량을 반으로 줄임
+            angle_increment = np.pi / 36  # 각도 증가량을 절반으로 줄임
             
             spiral_points = self.spiral_search(center, radius_increment, angle_increment, sprial_step)
             
             self.target_trans[:2] = spiral_points[0]
             
-            if curr_ee_trans[2] < 0.23:
+            if curr_ee_trans[2] < 0.225:
                 self.current_state = State.RELEASE_PEG.value 
 
             # Get distance between target pose, current pose

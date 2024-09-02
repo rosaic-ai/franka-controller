@@ -39,8 +39,42 @@ class GetImageThread:
     def fetch_images(self):
         ret, frame = self.cap.read()
         if ret:
-            self.img_queue.put(frame)
-        return frame
+            processed_frame = self.image_processing(frame)
+            self.img_queue.put(processed_frame)
+        return processed_frame
+
+    @staticmethod
+    def image_processing(image):
+        """
+        Crop the central 256x256 region of the provided image.
+        
+        Args:
+        image (np.array): The input image array.
+        
+        Returns:
+        np.array: The cropped image array.
+        """
+        if image is None:
+            return None  # Safeguard against None input if image fetch fails
+
+        size = 512
+        height, width, _ = image.shape
+        center_x = width // 2
+        
+        # Horizontal centering: start cropping 128 pixels to the left of the center
+        start_x = max(center_x - size//2, 0)
+        end_x = min(start_x + size, width)  # Ensure the crop does not exceed image width
+
+        # Vertical: start cropping from the very top
+        start_y = 0  # Start from the very top of the image
+        end_y = min(size, height)  # Crop down 256 pixels or up to the image height
+
+        # Adjust the start_x if the cropped width is less than 256 due to constraints
+        if end_x - start_x < size:
+            start_x = max(end_x - size, 0)
+    
+        cropped_image = image[start_y:end_y, start_x:end_x]
+        return cropped_image
 
     def close(self):
         self.cap.close()
@@ -239,14 +273,26 @@ class FrankaVC(gym.Env):
         return state
 
     def get_ee_pose(self):
-        """ Request the current robot state """
+        """ Request the current robot pose """
         response = requests.post(self.url + 'getpos')
         state = response.json()
         return state
 
-    def get_ee_ft(self):
-        """ Request the current robot state """
+    def get_ee_force(self):
+        """ Request the current robot force """
         response = requests.post(self.url + 'getforce')
+        state = response.json()
+        return state
+
+    def get_ee_torque(self):
+        """ Request the current robot torque """
+        response = requests.post(self.url + 'gettorque')
+        state = response.json()
+        return state
+
+    def get_joint_pos(self):
+        """ Request the current robot joint position """
+        response = requests.post(self.url + 'getq')
         state = response.json()
         return state
 

@@ -3,7 +3,7 @@ state_target_trans:
   approach_to_peg   : [0.46, 0.15, 0.3]
   lower_to_peg      : [0.46, 0.15, 0.19]    #0.028
   move_to_hole_above: [0.4645, 0.05, 0.3]  #0.063, 0.09
-  lower_to_hole     : [0.4645, -0.03, 0.23] # 0.23
+  lower_to_hole     : [0.4645, -0.035, 0.225] # 0.23
   match_to_hole     : [0.0, 0.0, 0.0165] #0.019 / 0.016
   insert_to_hole    : [0.0, 0.0, 0.0115]
   contact           : [0.4, 0.0, 0.165]
