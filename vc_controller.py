@@ -42,7 +42,7 @@ def cal_waypoints(start_pose, target_pose, steps, distance_threshold=0.1):
         if distance > distance_threshold:
             t = i / (steps - 1)
         else:
-            t = (i / (steps - 1)) * (distance / distance_threshold)  # 가까울수록 t를 줄임
+            t = (i / (steps - 1)) * (distance / distance_threshold)
 
         waypoint = lerp(start_pose, target_pose, t)
         waypoints.append(waypoint)
@@ -51,8 +51,8 @@ def cal_waypoints(start_pose, target_pose, steps, distance_threshold=0.1):
 
 def spiral_search(center, radius_increment, angle_increment, spiral_step):
     waypoints = []
-    radius = spiral_step * radius_increment  # 스파이럴 스텝에 따라 반경을 계산합니다
-    angle = spiral_step * angle_increment  # 스파이럴 스텝에 따라 각도를 계산합니다
+    radius = spiral_step * radius_increment 
+    angle = spiral_step * angle_increment
     
     x = center[0] + radius * np.cos(angle)
     y = center[1] + radius * np.sin(angle)
@@ -194,6 +194,9 @@ def main():
     loop_counter = 0 
     sequence_length = 5
     step_num_image = 4
+    url = 'http://210.125.85.207:300/get_data'
+    # url = 'http://127.0.0.1:5000/get_data'
+    
     
     image_buffers = collections.deque(maxlen=sequence_length)
     robot_data_buffers = collections.deque(maxlen=sequence_length * step_num_image)
@@ -224,18 +227,33 @@ def main():
             target_pose, current_state, gripper_state = state_machine.update_state(synced_pose[:3], synced_pose[3:], synced_contact, spiral_step)
             print(f"Current State: {State(current_state).name}")
 
-            if current_state == State.CONTACT_AND_MOVE.value:
+            if current_state == State.LOWER_TO_HOLE.value:
                 manage_state_internally = True
         else:
             print("Managing state internally")
-            if current_state == State.CONTACT_AND_MOVE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
+            if current_state == State.LOWER_TO_HOLE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
                 if loop_counter % 1 == 0:
                     image_buffers.append(synced_img)
                     robot_data_buffers.append((synced_contact, synced_joint))
                     
                 if len(image_buffers) == sequence_length and len(robot_data_buffers) == step_num_image * sequence_length:
                     print("Model input ready")
-                    pred_action = _model_inference(image_buffers, robot_data_buffers)
+                    
+                    # agrregate dataset
+                    image_list = np.stack(list(image_buffers)[-5:]) # N_img, H, W, C
+                    ft_list, proprio_list = [], []
+                    for ft, proprio in list(robot_data_buffers)[-5:]:
+                        ft_list.append(ft)
+                        proprio_list.append(proprio)
+                    
+                    ft_list = np.stack(ft_list)
+                    proprio_list = np.stack(proprio_list)
+                    
+                    # Send the POST request with the JSON payload
+                    response = requests.post(url, json={'image': image_list.tolist(), 'ft': ft_list.tolist(), 'proprio': proprio_list.tolist()})
+                                        
+                    print(response.jsonify())
+                    # pred_action = _model_inference(image_buffers, robot_data_buffers)
                     ########################################################
                     ############### ADD MODEL INFERENCE HERE ###############
                     ########################################################
