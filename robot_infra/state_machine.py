@@ -146,6 +146,7 @@ class RobotStateMachine:
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
+            print(get_pose_error)
             if get_pose_error < self.state_pose_thres['trans_thres']:
                 self.current_state = State.MOVE_TO_HOLE_ABOVE.value #MOVE_TO_HOLE_ABOVE, LOWER_TO_PEG
 
@@ -203,12 +204,12 @@ class RobotStateMachine:
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
             curr_z_force = curr_ft[2]
             
-            # Get distance between target pose, current pose
+            # # Get distance between target pose, current pose
             if curr_z_force > 2:
-                self.current_state = State.CONTACT_AND_MOVE.value 
+                self.current_state = State.MOVE_TO_PREDICTED_POSE.value #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
 
             # if get_pose_error < self.state_pose_thres['trans_thres']:
-            #     self.current_state = State.CONTACT_AND_MOVE.value
+            #     self.current_state = State.MOVE_TO_PREDICTED_POSE.value
             
         ####################################
         ###### MOVE_TO_PREDICTED_POSE ######
@@ -249,7 +250,7 @@ class RobotStateMachine:
 
             # Get distance between target pose, current pose
             if curr_z_force > 5:
-                self.current_state = State.CONTACT_AND_MOVE.value 
+                self.current_state = State.MOVE_TO_PREDICTED_POSE.value #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
         
                 
         ####################################

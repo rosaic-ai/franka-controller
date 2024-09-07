@@ -55,30 +55,32 @@ class GetImageThread:
         np.array: The cropped image array.
         """
         if image is None:
-            return None  # Safeguard against None input if image fetch fails
+            return None
 
-        size = 512
+        size = 480
         height, width, _ = image.shape
         center_x = width // 2
-        
-        # Horizontal centering: start cropping 128 pixels to the left of the center
-        start_x = max(center_x - size//2, 0)
-        end_x = min(start_x + size, width)  # Ensure the crop does not exceed image width
+        center_y = height // 2
 
-        # Vertical: start cropping from the very top
-        start_y = 0  # Start from the very top of the image
-        end_y = min(size, height)  # Crop down 256 pixels or up to the image height
+        # Calculate the starting and ending points for cropping
+        start_x = max(center_x - size // 2, 0)
+        end_x = min(start_x + size, width)
 
-        # Adjust the start_x if the cropped width is less than 256 due to constraints
+        start_y = max(center_y - size // 2, 0)
+        end_y = min(start_y + size, height)
+
         if end_x - start_x < size:
             start_x = max(end_x - size, 0)
-    
+        if end_y - start_y < size:
+            start_y = max(end_y - size, 0)
+
+        # Crop the image
         cropped_image = image[start_y:end_y, start_x:end_x]
         return cropped_image
 
     def close(self):
         self.cap.close()
-        self.img_queue.put(None)  # Signal to the displayer thread to stop
+        self.img_queue.put(None)
     
         
 class FrankaVC(gym.Env):

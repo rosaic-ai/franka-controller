@@ -180,9 +180,6 @@ def synchronize_data(observation_data):
         synced_data['pose_data'] = pose_data['pose']['pose']
 
     return synced_data
-
-def _model_inference(image_buffers, robot_data_buffers):
-    return None
     
 def main():
     last_state = None
@@ -193,13 +190,11 @@ def main():
     spiral_step = 0
     loop_counter = 0 
     sequence_length = 5
-    step_num_image = 4
-    url = 'http://210.125.85.207:300/get_data'
-    # url = 'http://127.0.0.1:5000/get_data'
+    url = 'http://172.27.190.155:100'
     
     
     image_buffers = collections.deque(maxlen=sequence_length)
-    robot_data_buffers = collections.deque(maxlen=sequence_length * step_num_image)
+    robot_data_buffers = collections.deque(maxlen=sequence_length)
     
     last_time = time.time()
     loop_freq = 0
@@ -227,16 +222,18 @@ def main():
             target_pose, current_state, gripper_state = state_machine.update_state(synced_pose[:3], synced_pose[3:], synced_contact, spiral_step)
             print(f"Current State: {State(current_state).name}")
 
-            if current_state == State.LOWER_TO_HOLE.value:
+            if current_state == State.MOVE_TO_PREDICTED_POSE.value:
                 manage_state_internally = True
+                start_curr_pos = synced_pose[:3]
+                curr_pos = start_curr_pos
         else:
             print("Managing state internally")
-            if current_state == State.LOWER_TO_HOLE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
+            if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
                 if loop_counter % 1 == 0:
                     image_buffers.append(synced_img)
                     robot_data_buffers.append((synced_contact, synced_joint))
                     
-                if len(image_buffers) == sequence_length and len(robot_data_buffers) == step_num_image * sequence_length:
+                if len(image_buffers) == sequence_length:
                     print("Model input ready")
                     
                     # agrregate dataset
@@ -249,16 +246,29 @@ def main():
                     ft_list = np.stack(ft_list)
                     proprio_list = np.stack(proprio_list)
                     
-                    # Send the POST request with the JSON payload
-                    response = requests.post(url, json={'image': image_list.tolist(), 'ft': ft_list.tolist(), 'proprio': proprio_list.tolist()})
-                                        
-                    print(response.jsonify())
-                    # pred_action = _model_inference(image_buffers, robot_data_buffers)
-                    ########################################################
-                    ############### ADD MODEL INFERENCE HERE ###############
-                    ########################################################
-        
-        if current_state == State.CONTACT_AND_MOVE.value:
+                    # # Send the POST request with the JSON payload
+                    response = requests.post(url + '/predict', json={'images': image_list.tolist(), 'ft': ft_list.tolist(), 
+                                                                     'proprio': proprio_list.tolist()})
+                    response = response.json()
+                    pred_action = list(map(float, response['action']))
+
+                    # Get predicted action
+                    pred_delta_pos = [x * 10 for x in pred_action[:2]]  # delta position x, y에 10 곱하기
+                    pred_abs_quat = pred_action[3:7]  # absolute quaternion
+                    # Update the target position
+                    target_pos = curr_pos[:2] + pred_delta_pos  
+                    target_pos = np.array([*target_pos, curr_pos[2]])
+                    target_pos[2] = state_target_trans['contact_and_move'][2]
+                
+                    target_pose = np.concatenate((target_pos, pred_abs_quat))
+
+                    curr_pos = target_pos
+                    
+                    target_euler = R.from_quat(pred_abs_quat).as_euler('xyz', degrees=True)
+                    print(target_pos, target_euler)
+
+
+        if current_state == State.CONTACT_AND_MOVE.value or current_state == State.MOVE_TO_PREDICTED_POSE.value:
             control.move_to_pos(target_pose)
             if loop_counter % 4 == 0:
                 spiral_step += 1
