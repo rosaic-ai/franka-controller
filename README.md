@@ -81,7 +81,7 @@ realtime_config: ignore
 
 2. Create an instance of the gym environment in a second terminal.
     ```bash
-    python vc_controller.py
+    python vc_controller.py --gripper close --reset 1
     ```
 3. Using 3D space mouse for robot action data sampling
     3D space mouse interface code
