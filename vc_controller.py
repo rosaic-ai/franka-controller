@@ -1,7 +1,5 @@
 import numpy as np
 import time
-import requests
-import cv2
 import argparse
 from modules.config import Config
 
@@ -10,6 +8,11 @@ from robot_infra.envs.franka_vc_env import FrankaVC, GetImageThread, ImageDispla
 from robot_infra.state_machine import RobotStateMachine, State
 from robot_infra.camera.rs_capture import RSCapture
 from robot_infra.camera.video_capture import VideoCapture
+
+import socket
+import struct
+import pickle
+import time
 
 import logging
 import collections
@@ -180,7 +183,20 @@ def synchronize_data(observation_data):
         synced_data['pose_data'] = pose_data['pose']['pose']
 
     return synced_data
-    
+
+
+def send_data(sock, data):
+    """데이터를 전송하는 함수"""
+    serialized_data = pickle.dumps(data)
+    sock.sendall(struct.pack('>I', len(serialized_data)))
+    sock.sendall(serialized_data)
+
+def receive_result(sock):
+    """서버로부터 결과를 받는 함수"""
+    result_length = struct.unpack('>I', sock.recv(4))[0]
+    result = sock.recv(result_length)
+    return pickle.loads(result)
+
 def main():
     last_state = None
     waypoints = []
@@ -190,8 +206,9 @@ def main():
     spiral_step = 0
     loop_counter = 0 
     sequence_length = 5
-    url = 'http://172.27.190.155:100'
     
+    host = '172.27.190.155'
+    port = 70
     
     image_buffers = collections.deque(maxlen=sequence_length)
     robot_data_buffers = collections.deque(maxlen=sequence_length)
@@ -199,6 +216,8 @@ def main():
     last_time = time.time()
     loop_freq = 0
     manage_state_internally = False
+
+    state_machine.reset_tmp()
 
     while True:
         # 루프 시작 시간 측정
@@ -225,16 +244,21 @@ def main():
             if current_state == State.MOVE_TO_PREDICTED_POSE.value:
                 manage_state_internally = True
                 start_curr_pos = synced_pose[:3]
+                start_curr_quat = synced_pose[3:]
+                start_curr_euler = R.from_quat(start_curr_quat).as_euler('xyz', degrees=True)
+                
                 curr_pos = start_curr_pos
+                curr_euler = start_curr_euler
         else:
             print("Managing state internally")
+        
             if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
                 if loop_counter % 1 == 0:
                     image_buffers.append(synced_img)
                     robot_data_buffers.append((synced_contact, synced_joint))
                     
                 if len(image_buffers) == sequence_length:
-                    print("Model input ready")
+                    # print("Model input ready")
                     
                     # agrregate dataset
                     image_list = np.stack(list(image_buffers)[-5:]) # N_img, H, W, C
@@ -246,27 +270,53 @@ def main():
                     ft_list = np.stack(ft_list)
                     proprio_list = np.stack(proprio_list)
                     
-                    # # Send the POST request with the JSON payload
-                    response = requests.post(url + '/predict', json={'images': image_list.tolist(), 'ft': ft_list.tolist(), 
-                                                                     'proprio': proprio_list.tolist()})
-                    response = response.json()
-                    pred_action = list(map(float, response['action']))
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.connect((host, port))
+                        # print(f"서버 {host}:{port}에 연결되었습니다.")
 
+                        data = {
+                            "images": image_list,
+                            "ft_list": ft_list,
+                            "proprio_list": proprio_list
+                        }
+
+                        send_data(s, data)
+                        # print("데이터 전송이 완료되었습니다.")
+
+                        result = receive_result(s)
+                        pred_action = result['action']
+                        
                     # Get predicted action
-                    pred_delta_pos = [x * 10 for x in pred_action[:2]]  # delta position x, y에 10 곱하기
-                    pred_abs_quat = pred_action[3:7]  # absolute quaternion
+                    pred_delta_pos = [x * 2 for x in pred_action[:2]]
+                    # pred_delta_pos = pred_action[:2]
+                    perturbation = np.random.normal(0, 0.001, size=2)  # 2D perturbation for x, y
+                    pred_delta_pos = [x + p for x, p in zip(pred_delta_pos, perturbation)]
                     # Update the target position
                     target_pos = curr_pos[:2] + pred_delta_pos  
                     target_pos = np.array([*target_pos, curr_pos[2]])
                     target_pos[2] = state_target_trans['contact_and_move'][2]
-                
-                    target_pose = np.concatenate((target_pos, pred_abs_quat))
-
-                    curr_pos = target_pos
                     
-                    target_euler = R.from_quat(pred_abs_quat).as_euler('xyz', degrees=True)
-                    print(target_pos, target_euler)
+                    # Absolute quartertion
+                    pred_abs_quat = pred_action[3:7]  # absolute quaternion
+                    pred_abs_euler = R.from_quat(pred_abs_quat).as_euler('xyz', degrees=True)
+                    pred_abs_euler[2] = pred_abs_euler[2]*2
+                    target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
+                    
+                    # # Delta Euler angles
+                    # pred_delta_euler = pred_action[3:6] # delta euler angles # [0,0, pred_z]를 예상
+                    # target_euler = curr_euler + pred_delta_euler # update the target euler angles
+                    # target_quat = R.from_euler('xyz', target_euler, degrees=True).as_quat() # change euler to quaternion
 
+                    # Concat the target position and orientation
+                    target_pose = np.concatenate((target_pos, target_quat))
+
+                    # Update the current position and orientation
+                    curr_pos = target_pos
+                    # curr_euler = target_euler
+                    
+                    if curr_ee_trans[2] < state_target_trans['done'][2]:
+                        print("Done moving to predicted pose")
+                        break
 
         if current_state == State.CONTACT_AND_MOVE.value or current_state == State.MOVE_TO_PREDICTED_POSE.value:
             control.move_to_pos(target_pose)
