@@ -4,9 +4,9 @@ state_target_trans:
   lower_to_peg      : [0.46, 0.15, 0.19]    #0.028
   move_to_hole_above: [0.5, 0.0, 0.28]  #0.063, 0.09
   zero_force        : [0.5, 0.0, 0.29] 
-  lower_to_hole     : [0.51, 0.0, 0.23] # 0.226, 0.222 0.229(cross)
-  contact_and_move  : [0.4645, -0.024, 0.222] #0.025
-  insertion_done    : [0.0, 0.0, 0.222] 
+  lower_to_hole     : [0.51, 0.0, 0.225] # 0.226, 0.222 0.229(cross)
+  contact_and_move  : [0.4645, -0.024, 0.223] #0.025
+  insertion_done    : [0.0, 0.0, 0.223] 
   done              : [0.0, 0.0, 0.219]
 
 state_target_ori:

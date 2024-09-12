@@ -96,7 +96,7 @@ class RobotStateMachine:
                 
     def reset(self):
         print("Resetting to initial state...")
-        self.control.compliance_mode()
+        self.control.precision_mode()
         curr_pos, curr_quat = self.get_curr_pose()
         
         # Extract 5cm
@@ -142,6 +142,7 @@ class RobotStateMachine:
         ##################################
         approach = self.current_state == State.APPROACH_PEG.value
         if approach:
+            self.control.precision_mode()
             # self.gripper_control(gripper_state='open')
             self.target_trans = self.state_target_trans['approach_to_peg']
             self.target_euler = self.state_target_ori['target_euler']
@@ -191,13 +192,14 @@ class RobotStateMachine:
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
             print(get_pose_error)
             if get_pose_error < self.state_pose_thres['trans_thres']:
-                self.current_state = State.LOWER_TO_HOLE.value
+                self.current_state = State.ZERO_FORCE.value
     
         ################################
         ########## INITIALIZE ##########
         ################################
         zero_force = self.current_state == State.ZERO_FORCE.value
         if zero_force:
+            self.control.compliance_mode()
             self.target_trans = self.state_target_trans['zero_force']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
@@ -241,7 +243,7 @@ class RobotStateMachine:
             print(self.target_trans)
             curr_z_force = curr_ft[2]
             
-            if curr_z_force <-1:
+            if curr_z_force <-4:
                 self.current_state = State.MOVE_TO_PREDICTED_POSE.value #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
 
             

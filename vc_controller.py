@@ -16,6 +16,8 @@ import time
 
 import logging
 import collections
+import torchvision.transforms as transforms
+from PIL import Image as Im
 
 import rospy
 from geometry_msgs.msg import WrenchStamped, Wrench
@@ -75,6 +77,16 @@ def move_to_waypoint(control, waypoints, gripper_state, current_index):
         current_index += 1
     
     return current_index
+
+def process_image(image):
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),            
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    image = Im.fromarray(np.uint8(image)).convert('RGB')
+    processed_image = transform(image)
+    return processed_image
 
 def initialize_force_torque_sensors():
     initial_force = control.get_ee_force()['force']
@@ -183,9 +195,12 @@ def _get_observation_for_debugging():
 
 
 def fetch_all_observation(get_img, curr_joint_pos, curr_contact, curr_pose):
+    
+    processed_img = process_image(get_img)
+
     timestamp = time.time()  # Get current time for all observations to maintain uniformity
     obs_with_timestamp = {
-        'camera_data':  {'image': get_img, 'timestamp': timestamp},
+        'camera_data':  {'image': processed_img, 'timestamp': timestamp},
         'joint_data':   {'joint': curr_joint_pos, 'timestamp': timestamp},
         'contact_data': {'contact': curr_contact, 'timestamp': timestamp},
         'pose_data': {'pose': curr_pose, 'timestamp': timestamp},
@@ -250,7 +265,7 @@ def main():
     current_state = None
     
     host = '172.27.190.155'
-    port = 73
+    port = 75
     
     image_buffers = collections.deque(maxlen=sequence_length)
     robot_data_buffers = collections.deque(maxlen=sequence_length)
@@ -303,7 +318,7 @@ def main():
             print("Managing state internally")
         
             if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE, LOWER_TO_HOLE
-                if loop_counter % 4 == 0:
+                if loop_counter % 1 == 0:
                     image_buffers.append(synced_img)
                     robot_data_buffers.append((synced_contact, synced_joint))
                     
@@ -339,7 +354,7 @@ def main():
                     # Get predicted action
                     pred_delta_pos = [x * 2 for x in pred_action[:2]]
                     # pred_delta_pos = pred_action[:2]
-                    perturbation = np.random.normal(0, 0.0004, size=2)  # 2D perturbation for x, y
+                    perturbation = np.random.normal(0, 0.0005, size=2)  # 2D perturbation for x, y
                     pred_delta_pos = [x + p for x, p in zip(pred_delta_pos, perturbation)]
                     # Update the target position
                     
@@ -358,7 +373,7 @@ def main():
                     # target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
                     
                     # Delta Euler angles
-                    pred_delta_euler_z = pred_action[3]*3 # delta euler angles # [0,0, pred_z]를 예상
+                    pred_delta_euler_z = pred_action[3]*5 # delta euler angles # [0,0, pred_z]를 예상
                     target_euler_z = curr_euler[2] + pred_delta_euler_z # update the target euler angles
                     target_euler = np.array([*curr_euler[:2], target_euler_z])
                     target_quat = R.from_euler('xyz', target_euler, degrees=True).as_quat() # change euler to quaternion
