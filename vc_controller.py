@@ -17,6 +17,12 @@ import time
 import logging
 import collections
 
+import rospy
+from geometry_msgs.msg import WrenchStamped, Wrench
+
+rospy.init_node('robot_force_torque_publisher')
+force_torque_pub = rospy.Publisher('ee_force_torque', WrenchStamped, queue_size=5)
+
 last_camera_fetch_time = 0
 last_pose_fetch_time = 0
 last_force_fetch_time = 0
@@ -70,7 +76,36 @@ def move_to_waypoint(control, waypoints, gripper_state, current_index):
     
     return current_index
 
-def _get_observation():
+def initialize_force_torque_sensors():
+    initial_force = control.get_ee_force()['force']
+    initial_torque = control.get_ee_torque()['torque']
+    initial_force_torque = np.concatenate((initial_force, initial_torque))
+    return initial_force_torque
+
+def _publish_ft_topic(initial_force_torque):
+    curr_force = control.get_ee_force()['force']
+    curr_torque = control.get_ee_torque()['torque']
+
+    force_torque_msg = WrenchStamped()
+    force_torque_msg.header.stamp = rospy.Time.now()
+    force_torque_msg.header.frame_id = 'ee_frame'
+    # force_torque_msg.wrench.force.x = curr_force[0]
+    # force_torque_msg.wrench.force.y = curr_force[1]
+    # force_torque_msg.wrench.force.z = curr_force[2]
+    # force_torque_msg.wrench.torque.x = curr_torque[0]
+    # force_torque_msg.wrench.torque.y = curr_torque[1]
+    # force_torque_msg.wrench.torque.z = curr_torque[2]
+    
+    force_torque_msg.wrench.force.x = -(curr_force[0] - initial_force_torque[0])
+    force_torque_msg.wrench.force.y = -(curr_force[1] - initial_force_torque[1])
+    force_torque_msg.wrench.force.z = -(curr_force[2] - initial_force_torque[2])
+    force_torque_msg.wrench.torque.x = -(curr_torque[0] - initial_force_torque[3])
+    force_torque_msg.wrench.torque.y = -(curr_torque[1] - initial_force_torque[4])
+    force_torque_msg.wrench.torque.z = -(curr_torque[2] - initial_force_torque[5])
+        
+    force_torque_pub.publish(force_torque_msg)
+
+def _get_observation(initial_force_torque):
     # Fetch the latest image
     get_img = camera_thread.fetch_images()
 
@@ -81,10 +116,15 @@ def _get_observation():
 
     # Get current end-effector force
     curr_force = control.get_ee_force()['force']  
-    curr_torque = control.get_ee_torque()['torque']  
-    force_array = np.array(curr_force)
-    torque_array = np.array(curr_torque)
-    curr_ee_ft = np.concatenate((force_array, torque_array))    
+    curr_torque = control.get_ee_torque()['torque']
+
+    force_array = -(np.array(curr_force) - initial_force_torque[:3])
+    torque_array = -(np.array(curr_torque) - initial_force_torque[3:])
+    curr_ee_ft = np.concatenate((force_array, torque_array))
+
+    # force_array = np.array(curr_force)
+    # torque_array = np.array(curr_torque)
+    # curr_ee_ft = np.concatenate((force_array, torque_array))    
     
     curr_joint_pos = control.get_joint_pos()
 
@@ -206,9 +246,11 @@ def main():
     spiral_step = 0
     loop_counter = 0 
     sequence_length = 5
+    initial_force_torque = np.zeros(6)
+    current_state = None
     
     host = '172.27.190.155'
-    port = 70
+    port = 73
     
     image_buffers = collections.deque(maxlen=sequence_length)
     robot_data_buffers = collections.deque(maxlen=sequence_length)
@@ -220,6 +262,8 @@ def main():
     state_machine.reset_tmp()
 
     while True:
+        _publish_ft_topic(initial_force_torque)
+
         # 루프 시작 시간 측정
         current_time = time.time()
         if loop_counter > 0:
@@ -227,8 +271,8 @@ def main():
             loop_freq = 1 / loop_interval if loop_interval else 0
             print(f"Loop Frequency: {loop_freq:.2f} Hz")
         last_time = current_time
-                
-        get_img, curr_ee_pose, curr_ee_trans, curr_ee_quat, curr_contact, curr_joint = _get_observation() #_get_observation(), _get_observation_for_debugging()
+        
+        get_img, curr_ee_pose, curr_ee_trans, curr_ee_quat, curr_contact, curr_joint = _get_observation(initial_force_torque) #_get_observation(), _get_observation_for_debugging()
         obs_with_timestamp = fetch_all_observation(get_img, curr_joint, curr_contact, curr_ee_pose)
         synced_obs = synchronize_data(obs_with_timestamp)
         
@@ -236,12 +280,17 @@ def main():
         synced_contact = np.array(synced_obs['contact_data'])
         synced_joint = np.array(synced_obs['joint_data'])
         synced_pose = np.array(synced_obs['pose_data'])        
+                    
+        # Reset sensors
+        if current_state == State.ZERO_FORCE.value: 
+            initial_force_torque = initialize_force_torque_sensors()
     
         if not manage_state_internally:
             target_pose, current_state, gripper_state = state_machine.update_state(synced_pose[:3], synced_pose[3:], synced_contact, spiral_step)
             print(f"Current State: {State(current_state).name}")
 
-            if current_state == State.MOVE_TO_PREDICTED_POSE.value:
+                
+            if current_state == State.MOVE_TO_PREDICTED_POSE.value: 
                 manage_state_internally = True
                 start_curr_pos = synced_pose[:3]
                 start_curr_quat = synced_pose[3:]
@@ -249,11 +298,12 @@ def main():
                 
                 curr_pos = start_curr_pos
                 curr_euler = start_curr_euler
+                
         else:
             print("Managing state internally")
         
-            if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
-                if loop_counter % 1 == 0:
+            if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE, LOWER_TO_HOLE
+                if loop_counter % 4 == 0:
                     image_buffers.append(synced_img)
                     robot_data_buffers.append((synced_contact, synced_joint))
                     
@@ -289,23 +339,29 @@ def main():
                     # Get predicted action
                     pred_delta_pos = [x * 2 for x in pred_action[:2]]
                     # pred_delta_pos = pred_action[:2]
-                    perturbation = np.random.normal(0, 0.001, size=2)  # 2D perturbation for x, y
+                    perturbation = np.random.normal(0, 0.0004, size=2)  # 2D perturbation for x, y
                     pred_delta_pos = [x + p for x, p in zip(pred_delta_pos, perturbation)]
                     # Update the target position
-                    target_pos = curr_pos[:2] + pred_delta_pos  
-                    target_pos = np.array([*target_pos, curr_pos[2]])
-                    target_pos[2] = state_target_trans['contact_and_move'][2]
                     
-                    # Absolute quartertion
-                    pred_abs_quat = pred_action[3:7]  # absolute quaternion
-                    pred_abs_euler = R.from_quat(pred_abs_quat).as_euler('xyz', degrees=True)
-                    pred_abs_euler[2] = pred_abs_euler[2]*2
-                    target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
+                    if curr_ee_trans[2] < state_target_trans['insertion_done'][2]:
+                        target_pos[2] -= 0.001
+                        print("Insertion")
+                    else:
+                        target_pos = curr_pos[:2] + pred_delta_pos  
+                        target_pos = np.array([*target_pos, curr_pos[2]])
+                        target_pos[2] = state_target_trans['contact_and_move'][2]
                     
-                    # # Delta Euler angles
-                    # pred_delta_euler = pred_action[3:6] # delta euler angles # [0,0, pred_z]를 예상
-                    # target_euler = curr_euler + pred_delta_euler # update the target euler angles
-                    # target_quat = R.from_euler('xyz', target_euler, degrees=True).as_quat() # change euler to quaternion
+                    # # Absolute quartertion
+                    # pred_abs_quat = pred_action[3:7]  # absolute quaternion
+                    # pred_abs_euler = R.from_quat(pred_abs_quat).as_euler('xyz', degrees=True)
+                    # pred_abs_euler[2] = pred_abs_euler[2]*2
+                    # target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
+                    
+                    # Delta Euler angles
+                    pred_delta_euler_z = pred_action[3]*3 # delta euler angles # [0,0, pred_z]를 예상
+                    target_euler_z = curr_euler[2] + pred_delta_euler_z # update the target euler angles
+                    target_euler = np.array([*curr_euler[:2], target_euler_z])
+                    target_quat = R.from_euler('xyz', target_euler, degrees=True).as_quat() # change euler to quaternion
 
                     # Concat the target position and orientation
                     target_pose = np.concatenate((target_pos, target_quat))
@@ -313,19 +369,22 @@ def main():
                     # Update the current position and orientation
                     curr_pos = target_pos
                     # curr_euler = target_euler
-                    
+
                     if curr_ee_trans[2] < state_target_trans['done'][2]:
                         print("Done moving to predicted pose")
                         break
 
-        if current_state == State.CONTACT_AND_MOVE.value or current_state == State.MOVE_TO_PREDICTED_POSE.value:
+        if current_state == State.CONTACT_AND_MOVE.value \
+            or current_state == State.MOVE_TO_PREDICTED_POSE.value \
+            or current_state == State.LOWER_TO_HOLE.value \
+            or current_state == State.MOVE_TO_CONTACT.value:
             control.move_to_pos(target_pose)
-            if loop_counter % 4 == 0:
+            if loop_counter % 1 == 0:
                 spiral_step += 1
         else:
             if last_target_pose is None or not np.array_equal(target_pose, last_target_pose):
                 start_pos = curr_ee_pose['pose'][:]
-                waypoints = cal_waypoints(start_pos, target_pose, 15)
+                waypoints = cal_waypoints(start_pos, target_pose, 10)
                 current_index = 0
                 last_target_pose = target_pose
                 

@@ -19,14 +19,16 @@ class State(Enum):
     LOWER_TO_PEG = 2
     GRASP_PEG = 3
     MOVE_TO_HOLE_ABOVE = 4
-    LOWER_TO_HOLE = 5
-    MOVE_TO_PREDICTED_POSE = 6
-    INSERT_TO_HOLE = 7
-    POSE_RECOVERY = 8
-    RELEASE_PEG = 9
-    CONTACT = 10
-    CONTACT_AND_MOVE = 11
-    DONE = 12
+    ZERO_FORCE = 5
+    LOWER_TO_HOLE = 6
+    MOVE_TO_CONTACT = 7
+    MOVE_TO_PREDICTED_POSE = 8
+    INSERT_TO_HOLE = 9
+    POSE_RECOVERY = 10
+    RELEASE_PEG = 11
+    CONTACT = 12
+    CONTACT_AND_MOVE = 13
+    DONE = 14
 
 class RobotStateMachine:
     def __init__(self, device='cpu', num_envs=1, config_robot=None):
@@ -35,9 +37,11 @@ class RobotStateMachine:
         self.state_target_ori   = config_robot.get('state_target_ori', {})
         self.state_pose_thres   = config_robot.get('state_pose_thres', {})
         self.control = FrankaVC(config_robot=config_robot)        
-        self.current_state = State.APPROACH_PEG.value # Initial state
+        self.current_state = State.APPROACH_PEG.value # MOVE_TO_HOLE_ABOVE, APPROACH_PEG
         self.previous_state = None
         self.gripper_state = None
+        self.start_time = None  # 시간 측정을 시작할 때 사용할 변수 초기화
+
         # self.camera_thread = GetImageThread(serial_number='130322270132', dim=(848, 480), fps=15, depth=False)
         # displayer_thread = ImageDisplayer(self.camera_thread.img_queue)
         # displayer_thread.start()
@@ -89,9 +93,7 @@ class RobotStateMachine:
         print("targ pose :", np.round(initial_pose,      3))   
         print("---" * 20)     
         self.control.move_to_pos(initial_pose)
-        
-        print("Reset complete. Starting with APPROACH_PEG state.")
-        
+                
     def reset(self):
         print("Resetting to initial state...")
         self.control.compliance_mode()
@@ -134,12 +136,12 @@ class RobotStateMachine:
             self.control.open_gripper()
     
     def update_state(self, curr_ee_trans, curr_ee_quat, curr_ft, sprial_step, config = None):
+        
         ##################################
         ########## APPROACH_PEG ##########
         ##################################
         approach = self.current_state == State.APPROACH_PEG.value
         if approach:
-            self.control.compliance_mode()
             # self.gripper_control(gripper_state='open')
             self.target_trans = self.state_target_trans['approach_to_peg']
             self.target_euler = self.state_target_ori['target_euler']
@@ -187,30 +189,63 @@ class RobotStateMachine:
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
-
+            print(get_pose_error)
             if get_pose_error < self.state_pose_thres['trans_thres']:
                 self.current_state = State.LOWER_TO_HOLE.value
     
+        ################################
+        ########## INITIALIZE ##########
+        ################################
+        zero_force = self.current_state == State.ZERO_FORCE.value
+        if zero_force:
+            self.target_trans = self.state_target_trans['zero_force']
+            self.target_euler = self.state_target_ori['target_euler']
+            self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
+            
+            if self.start_time is None:
+                self.start_time = time.time()
+            
+            
+            if time.time() - self.start_time >= 3:
+                self.current_state = State.LOWER_TO_HOLE.value
+                self.start_time = None
+                print("State changed to LOWER_TO_HOLE after 3 seconds")
+        
     
         ####################################
         ########### LOWER_TO_HOLE ##########
         ####################################
         lower_to_hole = self.current_state == State.LOWER_TO_HOLE.value
-        if lower_to_hole:
+        if lower_to_hole:            
             self.target_trans = self.state_target_trans['lower_to_hole']
             self.target_euler = self.state_target_ori['target_euler']
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
+            # curr_z_force = curr_ft[2]
+            
+            # # # Get distance between target pose, current pose
+            # if curr_z_force <-1:
+            #     self.current_state = State.MOVE_TO_PREDICTED_POSE.value #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
+            print(get_pose_error)
+            if get_pose_error < self.state_pose_thres['trans_thres']:
+                self.current_state = State.MOVE_TO_CONTACT.value
+        
+        ####################################
+        ########### MOVE_TO_CONTACT ########
+        ####################################
+        move_to_contact = self.current_state == State.MOVE_TO_CONTACT.value
+        if move_to_contact:            
+            self.target_trans[:2] = self.state_target_trans['lower_to_hole'][:2]
+            self.target_trans[2] -= 0.00005 # incremental step
+            print(self.target_trans)
             curr_z_force = curr_ft[2]
             
-            # # Get distance between target pose, current pose
-            if curr_z_force > 2:
+            if curr_z_force <-1:
                 self.current_state = State.MOVE_TO_PREDICTED_POSE.value #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
 
-            # if get_pose_error < self.state_pose_thres['trans_thres']:
-            #     self.current_state = State.MOVE_TO_PREDICTED_POSE.value
             
+        
         ####################################
         ###### MOVE_TO_PREDICTED_POSE ######
         ####################################

@@ -110,7 +110,7 @@ class FrankaVC(gym.Env):
         self.randomreset = randomReset
         self.actionnoise = 0
         self.hz = hz
-
+        
         ## NUC
         self.ip = '127.0.0.1'
         self.url = 'http://'+self.ip+':5000/'

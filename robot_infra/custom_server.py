@@ -21,7 +21,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "robot_ip", "173.16.0.2", "IP address of the franka robot's controller box"
 )
-flags.DEFINE_float("gripper_dist", 0.09, 
+flags.DEFINE_float("gripper_dist", 0.06, 
                    "Gripper open distance: 0.09 for single-object task, 0.075 for multi-object task")
 
 flags.DEFINE_bool("force_base_frame", False, "Use base frame for force/torque")
