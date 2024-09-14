@@ -60,7 +60,7 @@ class RobotStateMachine:
     
     def reset_tmp(self):
         print("Resetting to initial state...")
-        self.control.compliance_mode()
+        self.control.precision_mode()
         curr_pos, curr_quat = self.get_curr_pose()
                 
         # Extract 5cm
@@ -142,7 +142,6 @@ class RobotStateMachine:
         ##################################
         approach = self.current_state == State.APPROACH_PEG.value
         if approach:
-            self.control.precision_mode()
             # self.gripper_control(gripper_state='open')
             self.target_trans = self.state_target_trans['approach_to_peg']
             self.target_euler = self.state_target_ori['target_euler']
@@ -208,7 +207,7 @@ class RobotStateMachine:
                 self.start_time = time.time()
             
             
-            if time.time() - self.start_time >= 3:
+            if time.time() - self.start_time >= 1:
                 self.current_state = State.LOWER_TO_HOLE.value
                 self.start_time = None
                 print("State changed to LOWER_TO_HOLE after 3 seconds")
@@ -229,7 +228,6 @@ class RobotStateMachine:
             # # # Get distance between target pose, current pose
             # if curr_z_force <-1:
             #     self.current_state = State.MOVE_TO_PREDICTED_POSE.value #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE
-            print(get_pose_error)
             if get_pose_error < self.state_pose_thres['trans_thres']:
                 self.current_state = State.MOVE_TO_CONTACT.value
         

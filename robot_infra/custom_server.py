@@ -21,7 +21,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "robot_ip", "173.16.0.2", "IP address of the franka robot's controller box"
 )
-flags.DEFINE_float("gripper_dist", 0.07, 
+flags.DEFINE_float("gripper_dist", 0.05, 
                    "Gripper open distance: 0.09 for single-object task, 0.075 for multi-object task")
 
 flags.DEFINE_bool("force_base_frame", False, "Use base frame for force/torque")
@@ -321,30 +321,45 @@ def main(_):
     ## Route for increasing controller gain
     @webapp.route("/precision_mode", methods=["POST"])
     def precision_mode():
-        reconf_client.update_configuration({"translational_stiffness": 2000})
-        reconf_client.update_configuration({"translational_damping": 89})
-        reconf_client.update_configuration({"rotational_stiffness": 150})
-        reconf_client.update_configuration({"rotational_damping": 7})
-        reconf_client.update_configuration({"translational_Ki": 15})
-        reconf_client.update_configuration({"rotational_Ki": 10})
+        reconf_client.update_configuration({"translational_stiffness": 2000}) #2000
+        reconf_client.update_configuration({"translational_damping": 89}) #80
+        reconf_client.update_configuration({"rotational_stiffness": 150}) #150
+        reconf_client.update_configuration({"rotational_damping": 7}) # 7
+        reconf_client.update_configuration({"translational_Ki": 10}) #10
+        reconf_client.update_configuration({"rotational_Ki": 0})
         for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-            reconf_client.update_configuration({"translational_clip_" + direction: 0.1})
-            reconf_client.update_configuration({"rotational_clip_"+ direction: 0.1})
+            reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
+            reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
         return 'Precision'
         
-    ## Route for decreasing controller gain
+    # Route for decreasing controller gain
     @webapp.route("/compliance_mode", methods=["POST"])
     def compliance_mode():
         reconf_client.update_configuration({"translational_stiffness": 1000}) #2000
         reconf_client.update_configuration({"translational_damping": 80}) #80
-        reconf_client.update_configuration({"rotational_stiffness": 15}) #150
-        reconf_client.update_configuration({"rotational_damping": 3}) # 7
+        reconf_client.update_configuration({"rotational_stiffness": 30}) #150
+        reconf_client.update_configuration({"rotational_damping": 7}) # 7
         reconf_client.update_configuration({"translational_Ki": 10}) #10
         reconf_client.update_configuration({"rotational_Ki": 0})
         for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
             reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
             reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
         return 'Compliance'
+                
+
+    ## Route for decreasing controller gain
+    # @webapp.route("/compliance_mode", methods=["POST"])
+    # def compliance_mode():
+    #     reconf_client.update_configuration({"translational_stiffness": 1000}) #2000
+    #     reconf_client.update_configuration({"translational_damping": 40}) #80
+    #     reconf_client.update_configuration({"rotational_stiffness": 300}) #150
+    #     reconf_client.update_configuration({"rotational_damping": 30}) # 7
+    #     reconf_client.update_configuration({"translational_Ki": 10}) #10
+    #     reconf_client.update_configuration({"rotational_Ki": 0})
+    #     for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
+    #         reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
+    #         reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
+    #     return 'Compliance'
     
     webapp.run(host="0.0.0.0")
 

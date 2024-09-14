@@ -260,12 +260,13 @@ def main():
     last_target_pose = None
     spiral_step = 0
     loop_counter = 0 
-    sequence_length = 5
+    sequence_length = 1
     initial_force_torque = np.zeros(6)
     current_state = None
-    
+    previous_pos = None
+
     host = '172.27.190.155'
-    port = 75
+    port = 81
     
     image_buffers = collections.deque(maxlen=sequence_length)
     robot_data_buffers = collections.deque(maxlen=sequence_length)
@@ -275,6 +276,7 @@ def main():
     manage_state_internally = False
 
     state_machine.reset_tmp()
+    control.precision_mode()
 
     while True:
         _publish_ft_topic(initial_force_torque)
@@ -296,9 +298,9 @@ def main():
         synced_joint = np.array(synced_obs['joint_data'])
         synced_pose = np.array(synced_obs['pose_data'])        
                     
-        # Reset sensors
-        if current_state == State.ZERO_FORCE.value: 
-            initial_force_torque = initialize_force_torque_sensors()
+        # # Reset sensors
+        # if current_state == State.ZERO_FORCE.value: 
+        #     initial_force_torque = initialize_force_torque_sensors()
     
         if not manage_state_internally:
             target_pose, current_state, gripper_state = state_machine.update_state(synced_pose[:3], synced_pose[3:], synced_contact, spiral_step)
@@ -333,16 +335,16 @@ def main():
                         proprio_list.append(proprio)
                     
                     ft_list = np.stack(ft_list)
-                    proprio_list = np.stack(proprio_list)
+                    proprio_list = np.stack(proprio_list)                    
                     
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         s.connect((host, port))
                         # print(f"서버 {host}:{port}에 연결되었습니다.")
 
                         data = {
-                            "images": image_list,
-                            "ft_list": ft_list,
-                            "proprio_list": proprio_list
+                            "images": synced_img,
+                            "ft_list": synced_contact,
+                            "proprio_list": synced_joint
                         }
 
                         send_data(s, data)
@@ -357,6 +359,22 @@ def main():
                     perturbation = np.random.normal(0, 0.0005, size=2)  # 2D perturbation for x, y
                     pred_delta_pos = [x + p for x, p in zip(pred_delta_pos, perturbation)]
                     # Update the target position
+                    
+                    # # 걸린 상태를 해결하는 알고리즘 추가
+                    # if previous_target_pose is not None and not np.array_equal(previous_target_pose, target_pose):
+                    #     # 타겟 포즈는 바뀌는데, 현재 포즈가 그대로인 경우
+                    #     if previous_pos is not None and np.array_equal(curr_pos, previous_pos):
+                    #         print("Detected stuck condition, applying perturbation")
+                            
+                    #         # 현재 포즈를 타겟 포즈로 설정하고 섭동 추가
+                    #         target_pos = curr_pos.copy()  
+                    #         perturbation_xy = np.random.normal(0, 0.0002, size=2)  # X, Y축에 작은 섭동 추가
+                    #         perturbation_z = np.random.normal(0, 0.0001)  # Z축에 작은 섭동 추가
+                            
+                    #         # X, Y, Z 섭동을 추가한 새로운 타겟 위치
+                    #         target_pos[:2] += perturbation_xy
+                    #         target_pos[2] += perturbation_z
+                    #         print(f"Applying perturbation: {perturbation_xy}, {perturbation_z}")
                     
                     if curr_ee_trans[2] < state_target_trans['insertion_done'][2]:
                         target_pos[2] -= 0.001
@@ -373,17 +391,23 @@ def main():
                     # target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
                     
                     # Delta Euler angles
-                    pred_delta_euler_z = pred_action[3]*5 # delta euler angles # [0,0, pred_z]를 예상
+                    pred_delta_euler_z = pred_action[3]*20 # delta euler angles # [0,0, pred_z]를 예상
+                    # Add little perturbation
+                    perturbation = np.random.normal(0, 1, size=1)  # 1D perturbation for z
+                    pred_delta_euler_z += perturbation[0]
                     target_euler_z = curr_euler[2] + pred_delta_euler_z # update the target euler angles
-                    target_euler = np.array([*curr_euler[:2], target_euler_z])
-                    target_quat = R.from_euler('xyz', target_euler, degrees=True).as_quat() # change euler to quaternion
+                    print(target_euler_z)
+                    target_euler_new = np.array([*curr_euler[:2], target_euler_z])                    
+                    target_quat_new = R.from_euler('xyz', target_euler_new, degrees=True).as_quat() # change euler to quaternion
 
                     # Concat the target position and orientation
-                    target_pose = np.concatenate((target_pos, target_quat))
+                    target_pose = np.concatenate((target_pos, target_quat_new))
 
+                    previous_pos = curr_pos.copy()
+                    previous_target_pose = target_pose.copy()
                     # Update the current position and orientation
                     curr_pos = target_pos
-                    # curr_euler = target_euler
+
 
                     if curr_ee_trans[2] < state_target_trans['done'][2]:
                         print("Done moving to predicted pose")
