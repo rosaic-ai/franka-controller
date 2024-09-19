@@ -37,6 +37,7 @@ def get_argparser():
     parser.add_argument('--reset', type=int, default=0, help="0:False, 1:True")
     parser.add_argument('--gripper', type=str, default="open", choices=['open', 'close'],
                         help="Control the state of the gripper: open or close")
+    parser.add_argument('--port', type=int, default=83, help="Port number for communication")
     return parser
 
 def lerp(start, end, t):
@@ -266,7 +267,7 @@ def main():
     previous_pos = None
 
     host = '172.27.190.155'
-    port = 81
+    port = args.port
     
     image_buffers = collections.deque(maxlen=sequence_length)
     robot_data_buffers = collections.deque(maxlen=sequence_length)
@@ -297,10 +298,11 @@ def main():
         synced_contact = np.array(synced_obs['contact_data'])
         synced_joint = np.array(synced_obs['joint_data'])
         synced_pose = np.array(synced_obs['pose_data'])        
-                    
-        # # Reset sensors
-        # if current_state == State.ZERO_FORCE.value: 
-        #     initial_force_torque = initialize_force_torque_sensors()
+    
+    
+        # Reset sensors
+        if current_state == State.ZERO_FORCE.value: 
+            initial_force_torque = initialize_force_torque_sensors()
     
         if not manage_state_internally:
             target_pose, current_state, gripper_state = state_machine.update_state(synced_pose[:3], synced_pose[3:], synced_contact, spiral_step)
@@ -320,22 +322,7 @@ def main():
             print("Managing state internally")
         
             if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE, LOWER_TO_HOLE
-                if loop_counter % 1 == 0:
-                    image_buffers.append(synced_img)
-                    robot_data_buffers.append((synced_contact, synced_joint))
-                    
-                if len(image_buffers) == sequence_length:
-                    # print("Model input ready")
-                    
-                    # agrregate dataset
-                    image_list = np.stack(list(image_buffers)[-5:]) # N_img, H, W, C
-                    ft_list, proprio_list = [], []
-                    for ft, proprio in list(robot_data_buffers)[-5:]:
-                        ft_list.append(ft)
-                        proprio_list.append(proprio)
-                    
-                    ft_list = np.stack(ft_list)
-                    proprio_list = np.stack(proprio_list)                    
+                if loop_counter % 1 == 0:               
                     
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         s.connect((host, port))
@@ -348,7 +335,6 @@ def main():
                         }
 
                         send_data(s, data)
-                        # print("데이터 전송이 완료되었습니다.")
 
                         result = receive_result(s)
                         pred_action = result['action']
@@ -356,7 +342,7 @@ def main():
                     # Get predicted action
                     pred_delta_pos = [x * 2 for x in pred_action[:2]]
                     # pred_delta_pos = pred_action[:2]
-                    perturbation = np.random.normal(0, 0.0005, size=2)  # 2D perturbation for x, y
+                    perturbation = np.random.normal(0, 0.0001, size=2)  # 2D perturbation for x, y
                     pred_delta_pos = [x + p for x, p in zip(pred_delta_pos, perturbation)]
                     # Update the target position
                     
@@ -391,12 +377,12 @@ def main():
                     # target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
                     
                     # Delta Euler angles
-                    pred_delta_euler_z = pred_action[3]*20 # delta euler angles # [0,0, pred_z]를 예상
+                    pred_delta_euler_z = pred_action[3]*10 # delta euler angles # [0,0, pred_z]를 예상
                     # Add little perturbation
-                    perturbation = np.random.normal(0, 1, size=1)  # 1D perturbation for z
+                    perturbation = np.random.normal(0, 0.5, size=1)  # 1D perturbation for z
                     pred_delta_euler_z += perturbation[0]
                     target_euler_z = curr_euler[2] + pred_delta_euler_z # update the target euler angles
-                    print(target_euler_z)
+
                     target_euler_new = np.array([*curr_euler[:2], target_euler_z])                    
                     target_quat_new = R.from_euler('xyz', target_euler_new, degrees=True).as_quat() # change euler to quaternion
 
