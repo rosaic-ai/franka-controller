@@ -44,12 +44,14 @@ class GetImageThread:
         return processed_frame
 
     @staticmethod
-    def image_processing(image):
+    def image_processing(image, shift=50):
         """
-        Crop the central 256x256 region of the provided image.
+        Crop the central 256x256 region of the provided image,
+        with an option to shift the crop region to the right.
         
         Args:
         image (np.array): The input image array.
+        shift (int): Number of pixels to shift the crop region to the right.
         
         Returns:
         np.array: The cropped image array.
@@ -62,13 +64,14 @@ class GetImageThread:
         center_x = width // 2
         center_y = height // 2
 
-        # Calculate the starting and ending points for cropping
-        start_x = max(center_x - size // 2, 0)
+        # Adjust the starting and ending points for cropping
+        start_x = max(center_x - size // 2 + shift, 0)
         end_x = min(start_x + size, width)
 
         start_y = max(center_y - size // 2, 0)
         end_y = min(start_y + size, height)
 
+        # Ensure the crop size is maintained
         if end_x - start_x < size:
             start_x = max(end_x - size, 0)
         if end_y - start_y < size:

@@ -337,7 +337,7 @@ def main(_):
     # def compliance_mode():
     #     reconf_client.update_configuration({"translational_stiffness": 1000}) #2000
     #     reconf_client.update_configuration({"translational_damping": 80}) #80
-    #     reconf_client.update_configuration({"rotational_stiffness": 100}) #150
+    #     reconf_client.update_configuration({"rotational_stiffness":150}) #150
     #     reconf_client.update_configuration({"rotational_damping": 7}) # 7
     #     reconf_client.update_configuration({"translational_Ki": 10}) #10
     #     reconf_client.update_configuration({"rotational_Ki": 0})
@@ -358,7 +358,7 @@ def main(_):
         reconf_client.update_configuration({"rotational_Ki": 0})
         for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
             reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
-            reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
+            reconf_client.update_configuration({"rotational_clip_" + direction: 0.07})
         return 'Compliance'
     
     webapp.run(host="0.0.0.0")

@@ -109,12 +109,12 @@ def _publish_ft_topic(initial_force_torque):
     # force_torque_msg.wrench.torque.y = curr_torque[1]
     # force_torque_msg.wrench.torque.z = curr_torque[2]
     
-    force_torque_msg.wrench.force.x = -(curr_force[0] - initial_force_torque[0])
-    force_torque_msg.wrench.force.y = -(curr_force[1] - initial_force_torque[1])
-    force_torque_msg.wrench.force.z = -(curr_force[2] - initial_force_torque[2])
-    force_torque_msg.wrench.torque.x = -(curr_torque[0] - initial_force_torque[3])
-    force_torque_msg.wrench.torque.y = -(curr_torque[1] - initial_force_torque[4])
-    force_torque_msg.wrench.torque.z = -(curr_torque[2] - initial_force_torque[5])
+    force_torque_msg.wrench.force.x  = (curr_force[0] - initial_force_torque[0])
+    force_torque_msg.wrench.force.y  = (curr_force[1] - initial_force_torque[1])
+    force_torque_msg.wrench.force.z  = (curr_force[2] - initial_force_torque[2])
+    force_torque_msg.wrench.torque.x = (curr_torque[0] - initial_force_torque[3])
+    force_torque_msg.wrench.torque.y = (curr_torque[1] - initial_force_torque[4])
+    force_torque_msg.wrench.torque.z = (curr_torque[2] - initial_force_torque[5])
         
     force_torque_pub.publish(force_torque_msg)
 
@@ -265,7 +265,8 @@ def main():
     initial_force_torque = np.zeros(6)
     current_state = None
     previous_pos = None
-
+    previous_target_pose = None
+    
     host = '172.27.190.155'
     port = args.port
     
@@ -275,6 +276,11 @@ def main():
     last_time = time.time()
     loop_freq = 0
     manage_state_internally = False
+
+    # 설정값
+    force_threshold = 4  # 힘의 임계값
+    stuck_duration_threshold = 5  # 걸린 상태 감지 시간 (초)
+    last_force_check_time = time.time()  # 힘 검사를 시작한 마지막 시간
 
     state_machine.reset_tmp()
     control.precision_mode()
@@ -287,7 +293,7 @@ def main():
         if loop_counter > 0:
             loop_interval = current_time - last_time
             loop_freq = 1 / loop_interval if loop_interval else 0
-            print(f"Loop Frequency: {loop_freq:.2f} Hz")
+            # print(f"Loop Frequency: {loop_freq:.2f} Hz")
         last_time = current_time
         
         get_img, curr_ee_pose, curr_ee_trans, curr_ee_quat, curr_contact, curr_joint = _get_observation(initial_force_torque) #_get_observation(), _get_observation_for_debugging()
@@ -319,10 +325,10 @@ def main():
                 curr_euler = start_curr_euler
                 
         else:
-            print("Managing state internally")
+            # print("Managing state internally")
         
             if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE, LOWER_TO_HOLE
-                if loop_counter % 1 == 0:               
+                if loop_counter % 2 == 0:               
                     
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         s.connect((host, port))
@@ -338,62 +344,77 @@ def main():
 
                         result = receive_result(s)
                         pred_action = result['action']
-                        
+                    
+                    position_scale = 2 # 5
+                    orientation_scale = 2 #25
+                    
                     # Get predicted action
-                    pred_delta_pos = [x * 2 for x in pred_action[:2]]
+                    pred_delta_pos = [x * position_scale for x in pred_action[:2]]
                     # pred_delta_pos = pred_action[:2]
-                    perturbation = np.random.normal(0, 0.0001, size=2)  # 2D perturbation for x, y
+                    perturbation = np.random.normal(0, 0.0004, size=2)  # 2D perturbation for x, y
                     pred_delta_pos = [x + p for x, p in zip(pred_delta_pos, perturbation)]
-                    # Update the target position
-                    
-                    # # 걸린 상태를 해결하는 알고리즘 추가
-                    # if previous_target_pose is not None and not np.array_equal(previous_target_pose, target_pose):
-                    #     # 타겟 포즈는 바뀌는데, 현재 포즈가 그대로인 경우
-                    #     if previous_pos is not None and np.array_equal(curr_pos, previous_pos):
-                    #         print("Detected stuck condition, applying perturbation")
-                            
-                    #         # 현재 포즈를 타겟 포즈로 설정하고 섭동 추가
-                    #         target_pos = curr_pos.copy()  
-                    #         perturbation_xy = np.random.normal(0, 0.0002, size=2)  # X, Y축에 작은 섭동 추가
-                    #         perturbation_z = np.random.normal(0, 0.0001)  # Z축에 작은 섭동 추가
-                            
-                    #         # X, Y, Z 섭동을 추가한 새로운 타겟 위치
-                    #         target_pos[:2] += perturbation_xy
-                    #         target_pos[2] += perturbation_z
-                    #         print(f"Applying perturbation: {perturbation_xy}, {perturbation_z}")
-                    
+
+                    force_threshold = 5  # Force threshold in Newtons   
+                    is_inserting = False
+
+                    # Insert
+                    print(curr_ee_trans[2])
                     if curr_ee_trans[2] < state_target_trans['insertion_done'][2]:
-                        target_pos[2] -= 0.001
+                        target_pos[2] -= 0.002
                         print("Insertion")
+                        is_inserting = True
+                    
+                    elif abs(synced_contact[0]) > force_threshold or abs(synced_contact[1]) > force_threshold:
+                            print("High force detected. Adjusting target position upwards.")
+                            target_pos[2] += 0.0007  # Raise the z-position slightly to release the end-effector
                     else:
-                        target_pos = curr_pos[:2] + pred_delta_pos  
+                        if pred_delta_pos[0] < 0:
+                            # pred_delta[0]이 음수일 때, 더 많이 움직이도록 조정
+                            pred_delta_pos[0] -= 0.001  # 값을 더 감소시켜 더 많이 움직이도록 설정
+                        target_pos = curr_pos[:2] + pred_delta_pos
                         target_pos = np.array([*target_pos, curr_pos[2]])
                         target_pos[2] = state_target_trans['contact_and_move'][2]
-                    
+
                     # # Absolute quartertion
                     # pred_abs_quat = pred_action[3:7]  # absolute quaternion
                     # pred_abs_euler = R.from_quat(pred_abs_quat).as_euler('xyz', degrees=True)
                     # pred_abs_euler[2] = pred_abs_euler[2]*2
                     # target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
                     
-                    # Delta Euler angles
-                    pred_delta_euler_z = pred_action[3]*10 # delta euler angles # [0,0, pred_z]를 예상
-                    # Add little perturbation
-                    perturbation = np.random.normal(0, 0.5, size=1)  # 1D perturbation for z
-                    pred_delta_euler_z += perturbation[0]
-                    target_euler_z = curr_euler[2] + pred_delta_euler_z # update the target euler angles
+                    if not is_inserting:
+                        # Delta Euler angles
+                        scale = 0.02
+                        # z축 각도의 절대값을 계산
+                        angle_magnitude = abs(curr_euler[2])  # curr_euler[2]는 z축 회전 각도
 
-                    target_euler_new = np.array([*curr_euler[:2], target_euler_z])                    
-                    target_quat_new = R.from_euler('xyz', target_euler_new, degrees=True).as_quat() # change euler to quaternion
+                        # curr_euler[2]의 부호에 따라 회전 방향을 강화하거나 억제
+                        if curr_euler[2] < 0:
+                            # 음수일 경우 음수 방향으로 더 많이 돌리게
+                            scaling_factor = 1 + angle_magnitude / scale  # 각도에 따라 스케일 조정
+                        else:
+                            # 양수일 경우 양수 방향으로 더 많이 돌리게
+                            scaling_factor = 1 + angle_magnitude / scale
+
+                        # 예측된 delta euler z값을 scaling_factor로 조정
+                        pred_delta_euler_z = pred_action[3] * orientation_scale * scaling_factor
+
+                        # 작은 랜덤 섭동 추가
+                        perturbation = np.random.normal(-0.5, 0.5, size=1)  # z 방향으로 1D 섭동
+                        pred_delta_euler_z += perturbation[0]
+                        
+                        # delta
+                        target_euler_z = curr_euler[2] + pred_delta_euler_z # update the target euler angles
+                        # absolute
+                        # target_euler_z = pred_delta_euler_z
+
+                        target_euler_new = np.array([*curr_euler[:2], target_euler_z])                    
+                        target_quat_new = R.from_euler('xyz', target_euler_new, degrees=True).as_quat() # change euler to quaternion
 
                     # Concat the target position and orientation
                     target_pose = np.concatenate((target_pos, target_quat_new))
 
-                    previous_pos = curr_pos.copy()
-                    previous_target_pose = target_pose.copy()
                     # Update the current position and orientation
                     curr_pos = target_pos
-
 
                     if curr_ee_trans[2] < state_target_trans['done'][2]:
                         print("Done moving to predicted pose")
@@ -435,7 +456,7 @@ if __name__ == "__main__":
     control = FrankaVC(config_robot=config_robot, hz=30, start_gripper=start_gripper) # if 1, keep close
     state_machine = RobotStateMachine(device='cpu', config_robot=config_robot)
     
-    camera_thread = GetImageThread(serial_number='130322270132', dim=(848, 480), fps=30, depth=False)
+    camera_thread = GetImageThread(serial_number='427622270633', dim=(848, 480), fps=30, depth=False) #427622270633, 130322270132
     displayer_thread = ImageDisplayer(camera_thread.img_queue)
     displayer_thread.start()
     

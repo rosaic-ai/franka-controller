@@ -24,7 +24,7 @@ class State(Enum):
     MOVE_TO_CONTACT = 7
     MOVE_TO_PREDICTED_POSE = 8
     INSERT_TO_HOLE = 9
-    POSE_RECOVERY = 10
+    RECOVERY = 10
     RELEASE_PEG = 11
     CONTACT = 12
     CONTACT_AND_MOVE = 13
@@ -238,7 +238,6 @@ class RobotStateMachine:
         if move_to_contact:            
             self.target_trans[:2] = self.state_target_trans['lower_to_hole'][:2]
             self.target_trans[2] -= 0.00005 # incremental step
-            print(self.target_trans)
             curr_z_force = curr_ft[2]
             
             if curr_z_force <-4:
@@ -252,7 +251,6 @@ class RobotStateMachine:
         move_to_pred = self.current_state == State.MOVE_TO_PREDICTED_POSE.value
         if move_to_pred:
             print("Moving to predicted pose...")
-
         
         ####################################
         ########## INSERT_TO_HOLE ##########
@@ -301,17 +299,35 @@ class RobotStateMachine:
             
             center = self.target_trans[:2]
             radius_increment = 0.000001  # 반경 증가량을 반으로 줄임
+
             angle_increment = np.pi / 36  # 각도 증가량을 절반으로 줄임
             
             spiral_points = self.spiral_search(center, radius_increment, angle_increment, sprial_step)
             
             self.target_trans[:2] = spiral_points[0]
-            
-            if curr_ee_trans[2] < 0.225:
-                self.current_state = State.RELEASE_PEG.value 
 
-            # Get distance between target pose, current pose
-            # if get_pose_error < self.state_pose_thres['trans_thres']:
-                # self.current_state = State.RELEASE_PEG.value 
-        
+            # State transition condition
+            if curr_ee_trans[2] < 0.225:
+                self.current_state = State.RELEASE_PEG.value  # Transition to next state (e.g., RELEASE_PEG)
+
+        ###################################
+        ############# RECOVERY ############
+        ###################################
+        recovery = self.current_state == State.RECOVERY.value
+        if recovery:
+            print("Entering RECOVERY state: Lifting slightly to resolve high force situation.")
+            
+            # Slightly lift the Z position
+            self.target_trans[2] += 0.002  # Adjust the increment as needed
+
+            # Check if recovery is complete
+            recovery_duration = 0.5  # Time to stay in RECOVERY mode
+            if time.time() - self.recovery_start_time > recovery_duration:
+                print("Exiting RECOVERY state.")
+                self.current_state = State.MOVE_TO_PREDICTED_POSE.value  # Return to CONTACT_AND_MOVE or other appropriate state
+            else:
+                print(f"Recovering... Current Z: {curr_ee_trans[2]}, Target Z: {self.target_trans[2]}")
+
         return np.concatenate([self.target_trans, self.target_quat]), self.current_state, self.gripper_state
+
+
