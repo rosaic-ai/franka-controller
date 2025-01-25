@@ -1,25 +1,39 @@
-# state_target_trans:
-#   reset_pose        : [0.45, 0.0, 0.35]
-#   approach_to_peg   : [0.46, 0.15, 0.3]
-#   lower_to_peg      : [0.46, 0.15, 0.19]    #0.028
-#   move_to_hole_above: [0.5, 0.0, 0.28]  #0.063, 0.09
-#   zero_force        : [0.5, 0.0, 0.29] 
-#   lower_to_hole     : [0.51, 0.0, 0.229] # (hole 0.4) 0.224 (hole 0.45) 0.229
-#   contact_and_move  : [0.4645, -0.024, 0.229] # (hole 0.4) 0.221 (hole 0.45) 0.227
-#   insertion_done    : [0.0, 0.0, 0.229] #(hole 0.4) 0.2234 (hole 0.45) 0.2285
-#   done              : [0.0, 0.0, 0.225]
 
-# 2_pins
+# 0.4
 state_target_trans:
   reset_pose        : [0.45, 0.0, 0.35]
   approach_to_peg   : [0.46, 0.15, 0.3]
   lower_to_peg      : [0.46, 0.15, 0.19]    #0.028
   move_to_hole_above: [0.5, 0.0, 0.28]  #0.063, 0.09
   zero_force        : [0.5, 0.0, 0.29] 
-  lower_to_hole     : [0.51, 0.0, 0.228] # (hole 0.4) 0.224 (hole 0.45) 0.229
-  contact_and_move  : [0.4645, -0.024, 0.228] # (hole 0.4) 0.221 (hole 0.45) 0.227
-  insertion_done    : [0.0, 0.0, 0.2293] #(hole 0.4) 0.2234 (hole 0.45) 0.2285
-  done              : [0.0, 0.0, 0.2225]
+  lower_to_hole     : [0.51, 0.0, 0.225] # (hole 0.4) 0.224 (hole 0.45) 0.229
+  contact_and_move  : [0.4645, -0.024, 0.225] # (hole 0.4) 0.221 (hole 0.45) 0.227
+  insertion_done    : [0.0, 0.0, 0.2265] #(hole 0.4) 0.2234 (hole 0.45) 0.2285
+  done              : [0.0, 0.0, 0.221]
+
+# # 0.45
+# state_target_trans:
+#   reset_pose        : [0.51, 0.0, 0.35]
+#   approach_to_peg   : [0.46, 0.15, 0.3]
+#   lower_to_peg      : [0.46, 0.15, 0.19]    #0.028
+#   move_to_hole_above: [0.51, 0.0, 0.28]  #0.063, 0.09
+#   zero_force        : [0.51, 0.0, 0.29] 
+#   lower_to_hole     : [0.51, 0.0, 0.233] # (hole 0.4) 0.224 (hole 0.45) 0.229
+#   contact_and_move  : [0.4645, -0.024, 0.233] # (hole 0.4) 0.221 (hole 0.45) 0.227
+#   insertion_done    : [0.0, 0.0, 0.233] #(hole 0.4) 0.2234 (hole 0.45) 0.2285
+#   done              : [0.0, 0.0, 0.22]
+
+# # 2_pins
+# state_target_trans:
+#   reset_pose        : [0.45, 0.0, 0.35]
+#   approach_to_peg   : [0.46, 0.15, 0.3]
+#   lower_to_peg      : [0.46, 0.15, 0.19]    #0.028
+#   move_to_hole_above: [0.5, 0.0, 0.28]  #0.063, 0.09
+#   zero_force        : [0.5, 0.0, 0.29] 
+#   lower_to_hole     : [0.51, 0.0, 0.228] # (hole 0.4) 0.224 (hole 0.45) 0.229
+#   contact_and_move  : [0.4645, -0.024, 0.228] # (hole 0.4) 0.221 (hole 0.45) 0.227
+#   insertion_done    : [0.0, 0.0, 0.2293] #(hole 0.4) 0.2234 (hole 0.45) 0.2285
+#   done              : [0.0, 0.0, 0.2225]
 
 # 3_pins
 # state_target_trans:
@@ -39,7 +53,7 @@ state_target_ori:
   target_euler      : [0.0, 0.0, 0.0]
 
 state_pose_thres:
-  trans_thres: 0.008
+  trans_thres: 0.01
 
 control_params:
   pose_limits: [0.30, 0.6, -0.30, 0.30, 0.015, 0.4]

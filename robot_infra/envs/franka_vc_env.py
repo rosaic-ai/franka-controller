@@ -11,9 +11,92 @@ import time
 import requests
 import queue
 from scipy.spatial.transform import Rotation as R
+from datetime import datetime
+import os
 
 from ..camera.rs_capture import RSCapture
 from ..camera.video_capture import VideoCapture
+
+class RecorderThread(threading.Thread):
+    def __init__(self, image_queue, save_path, timestamp_file, fps):
+        super().__init__()
+        self.image_queue = image_queue
+        self.save_path = save_path
+        self.timestamp_file = open(timestamp_file, "w")
+        self.running = True
+        self.fps = fps
+        self.interval = 1.0 / fps
+
+    def run(self):
+        while self.running:
+            start_time = time.time()
+            frame = self.image_queue.get()
+            if frame is None:
+                break
+
+            # Save the frame with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            file_name = os.path.join(self.save_path, f"{timestamp}.jpg")
+            cv2.imwrite(file_name, frame)
+
+            # Log the timestamp
+            self.timestamp_file.write(f"{timestamp}\n")
+            self.timestamp_file.flush()
+
+            # Ensure consistent FPS
+            elapsed_time = time.time() - start_time
+            time.sleep(max(0, self.interval - elapsed_time))
+
+    def stop(self):
+        self.running = False
+        self.image_queue.put(None)
+        self.timestamp_file.close()
+
+class USBImageCapture(threading.Thread):
+    """
+    A class to capture images from a USB camera.
+    """
+    def __init__(self, device_index=0, dim=(1280, 720)):
+        super().__init__()
+        self.device_index = device_index
+        self.dim = dim
+        self.cap = cv2.VideoCapture(device_index)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, dim[0])
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, dim[1])
+        self.img_queue = queue.Queue(maxsize=10)  # Limit the queue size
+        self.running = True
+
+    def run(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                if not self.img_queue.full():
+                    self.img_queue.put(frame)
+            else:
+                print(f"[ERROR] Failed to capture frame from USB camera (index: {self.device_index}).")
+
+    def close(self):
+        self.running = False
+        self.cap.release()
+        self.img_queue.put(None)  # Signal the end of the queue
+        print("[INFO] USB camera closed.")
+
+class USBDisplayer(threading.Thread):
+    def __init__(self, queue):
+        super().__init__()
+        self.queue = queue
+        self.daemon = True
+
+    def run(self):
+        while True:
+            image = self.queue.get()
+            if image is None:
+                break
+            cv2.imshow('USB_CAM', image)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                cv2.destroyAllWindows()
+                break
+
 
 class ImageDisplayer(threading.Thread):
     def __init__(self, queue):
@@ -26,12 +109,13 @@ class ImageDisplayer(threading.Thread):
             image = self.queue.get()
             if image is None:
                 break
-            cv2.imshow('RealSense', image)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                cv2.destroyAllWindows()
-                break
+            # cv2.imshow('RealSense', image)
+            # if cv2.waitKey(1) & 0xFF == ord('q'):
+            #     cv2.destroyAllWindows()
+            #     break
 
-class GetImageThread:
+
+class GetImageThread():
     def __init__(self, serial_number, dim=(848, 480), fps=15, depth=False):
         self.cap = RSCapture(name='wrist_1', serial_number=serial_number, dim=dim, fps=fps, depth=depth)
         self.img_queue = queue.Queue()

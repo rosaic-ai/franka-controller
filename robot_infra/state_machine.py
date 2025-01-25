@@ -65,7 +65,7 @@ class RobotStateMachine:
                 
         # Extract 5cm
         raised_pos = np.array(curr_pos)
-        raised_pos[2] += 0.05
+        raised_pos[2] += 0.15
         raised_pose = np.concatenate([raised_pos, curr_quat])
         
         print("---" * 20)
@@ -148,7 +148,6 @@ class RobotStateMachine:
             self.target_quat = self.control.euler_2_quat(self.target_euler[0], self.target_euler[1], self.target_euler[2])
             
             get_pose_error = self.calculate_distance(curr_ee_trans, self.target_trans)
-            print(get_pose_error)
             if get_pose_error < self.state_pose_thres['trans_thres']:
                 self.current_state = State.MOVE_TO_HOLE_ABOVE.value #MOVE_TO_HOLE_ABOVE, LOWER_TO_PEG
 

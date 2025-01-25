@@ -4,7 +4,7 @@ import argparse
 from modules.config import Config
 
 from scipy.spatial.transform import Rotation as R
-from robot_infra.envs.franka_vc_env import FrankaVC, GetImageThread, ImageDisplayer
+from robot_infra.envs.franka_vc_env import FrankaVC, GetImageThread, ImageDisplayer, USBImageCapture, USBDisplayer, RecorderThread
 from robot_infra.state_machine import RobotStateMachine, State
 from robot_infra.camera.rs_capture import RSCapture
 from robot_infra.camera.video_capture import VideoCapture
@@ -13,6 +13,9 @@ import socket
 import struct
 import pickle
 import time
+import os
+import cv2
+from datetime import datetime
 
 import logging
 import collections
@@ -38,6 +41,8 @@ def get_argparser():
     parser.add_argument('--gripper', type=str, default="open", choices=['open', 'close'],
                         help="Control the state of the gripper: open or close")
     parser.add_argument('--port', type=int, default=83, help="Port number for communication")
+    parser.add_argument('--record', type=int, default=0, choices=[0, 1],
+                        help="Enable image recording: 0 for False, 1 for True")
     return parser
 
 def lerp(start, end, t):
@@ -118,9 +123,18 @@ def _publish_ft_topic(initial_force_torque):
         
     force_torque_pub.publish(force_torque_msg)
 
-def _get_observation(initial_force_torque):
+def _get_observation(initial_force_torque, time_step, black_pixel_prob=0.4, add_noise=False):
     # Fetch the latest image
-    get_img = camera_thread.fetch_images()
+    get_img = realsense_thread.fetch_images()
+
+    if add_noise:
+        if get_img is not None:
+            img_height, img_width, _ = get_img.shape
+
+            # 특정 확률로 이미지에 노이즈 추가
+            if np.random.rand() < black_pixel_prob:
+                print(f"[INFO] Black pixels applied at time step {time_step}")
+                get_img = np.zeros((img_height, img_width, 3), dtype=np.uint8)  # 검은 이미지
 
     # Get current end-effector pose
     curr_ee_pose = control.get_ee_pose()
@@ -130,6 +144,15 @@ def _get_observation(initial_force_torque):
     # Get current end-effector force
     curr_force = control.get_ee_force()['force']  
     curr_torque = control.get_ee_torque()['torque']
+
+    # if add_noise:
+    #     force_noise_std = 1
+    #     torque_noise_std = 10000
+    #     force_noise = np.random.normal(0, force_noise_std, size=len(curr_force))  # 가우시안 노이즈
+    #     curr_force = np.array(curr_force) + force_noise
+
+    #     torque_noise = np.random.normal(0, torque_noise_std, size=len(curr_torque))  # 가우시안 노이즈
+    #     curr_torque = np.array(curr_torque) + torque_noise
 
     force_array = -(np.array(curr_force) - initial_force_torque[:3])
     torque_array = -(np.array(curr_torque) - initial_force_torque[3:])
@@ -277,6 +300,10 @@ def main():
     loop_freq = 0
     manage_state_internally = False
 
+    # 삽입 시간 측정을 위한 변수
+    start_insertion_timer = None
+    end_insertion_timer = None
+
     # 설정값
     force_threshold = 4  # 힘의 임계값
     stuck_duration_threshold = 5  # 걸린 상태 감지 시간 (초)
@@ -296,16 +323,23 @@ def main():
             # print(f"Loop Frequency: {loop_freq:.2f} Hz")
         last_time = current_time
         
-        get_img, curr_ee_pose, curr_ee_trans, curr_ee_quat, curr_contact, curr_joint = _get_observation(initial_force_torque) #_get_observation(), _get_observation_for_debugging()
+
+        # 타임스텝을 _get_observation에 전달
+        get_img, curr_ee_pose, curr_ee_trans, curr_ee_quat, curr_contact, curr_joint = _get_observation(
+            initial_force_torque, time_step=loop_counter, black_pixel_prob=0.0, add_noise=True # black_pixel_prob 예시 값
+        )
         obs_with_timestamp = fetch_all_observation(get_img, curr_joint, curr_contact, curr_ee_pose)
         synced_obs = synchronize_data(obs_with_timestamp)
         
         synced_img = synced_obs['camera_data']
         synced_contact = np.array(synced_obs['contact_data'])
         synced_joint = np.array(synced_obs['joint_data'])
-        synced_pose = np.array(synced_obs['pose_data'])        
-    
-    
+        synced_pose = np.array(synced_obs['pose_data'])       
+
+        # OpenCV로 이미지 시각화
+        cv2.imshow("Image with Noise", get_img)
+        cv2.waitKey(1)  # 짧은 시간 대기 (1ms)
+        
         # Reset sensors
         if current_state == State.ZERO_FORCE.value: 
             initial_force_torque = initialize_force_torque_sensors()
@@ -316,6 +350,8 @@ def main():
 
                 
             if current_state == State.MOVE_TO_PREDICTED_POSE.value: 
+                start_insertion_timer = time.time()
+
                 manage_state_internally = True
                 start_curr_pos = synced_pose[:3]
                 start_curr_quat = synced_pose[3:]
@@ -328,7 +364,7 @@ def main():
             # print("Managing state internally")
         
             if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE, LOWER_TO_HOLE
-                if loop_counter % 2 == 0:               
+                if loop_counter % 1 == 0:               
                     
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         s.connect((host, port))
@@ -345,7 +381,7 @@ def main():
                         result = receive_result(s)
                         pred_action = result['action']
                     
-                    position_scale = 2 # 5
+                    position_scale = 3 # 2
                     orientation_scale = 2 #25
                     
                     # Get predicted action
@@ -360,9 +396,10 @@ def main():
                     # Insert
                     print(curr_ee_trans[2])
                     if curr_ee_trans[2] < state_target_trans['insertion_done'][2]:
-                        target_pos[2] -= 0.002
+                        target_pos[2] -= 0.003
                         print("Insertion")
                         is_inserting = True
+                        
                     
                     elif abs(synced_contact[0]) > force_threshold or abs(synced_contact[1]) > force_threshold:
                             print("High force detected. Adjusting target position upwards.")
@@ -382,8 +419,13 @@ def main():
                     # target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
                     
                     if not is_inserting:
+                    
+                        pred_delta_magnitued = np.linalg.norm(pred_delta_pos)
                         # Delta Euler angles
-                        scale = 0.02
+                        if pred_delta_magnitued > 0.0013:
+                            scale = 0.1
+                        else:
+                            scale = 0.02
                         # z축 각도의 절대값을 계산
                         angle_magnitude = abs(curr_euler[2])  # curr_euler[2]는 z축 회전 각도
 
@@ -399,7 +441,7 @@ def main():
                         pred_delta_euler_z = pred_action[3] * orientation_scale * scaling_factor
 
                         # 작은 랜덤 섭동 추가
-                        perturbation = np.random.normal(-0.5, 0.5, size=1)  # z 방향으로 1D 섭동
+                        perturbation = np.random.normal(-2, 2, size=1)  # z 방향으로 1D 섭동
                         pred_delta_euler_z += perturbation[0]
                         
                         # delta
@@ -417,7 +459,9 @@ def main():
                     curr_pos = target_pos
 
                     if curr_ee_trans[2] < state_target_trans['done'][2]:
-                        print("Done moving to predicted pose")
+                        end_insertion_timer = time.time()
+                        insertion_duration = end_insertion_timer - start_insertion_timer
+                        print(f"Insertion completed in {insertion_duration:.2f} seconds.")
                         break
 
         if current_state == State.CONTACT_AND_MOVE.value \
@@ -443,6 +487,8 @@ if __name__ == "__main__":
     parser = get_argparser()
     args = parser.parse_args()
     config_robot = Config(args.config_robot).get_config()
+    record = args.record
+
     if args.gripper == 'close':
         start_gripper = 0
     else:
@@ -456,19 +502,46 @@ if __name__ == "__main__":
     control = FrankaVC(config_robot=config_robot, hz=30, start_gripper=start_gripper) # if 1, keep close
     state_machine = RobotStateMachine(device='cpu', config_robot=config_robot)
     
-    camera_thread = GetImageThread(serial_number='427622270633', dim=(848, 480), fps=30, depth=False) #427622270633, 130322270132
-    displayer_thread = ImageDisplayer(camera_thread.img_queue)
-    displayer_thread.start()
+    # Get Images
+    realsense_thread = GetImageThread(serial_number='427622270633', dim=(848, 480), fps=30, depth=False)
+    realsense_displayer = ImageDisplayer(realsense_thread.img_queue)
+    realsense_displayer.start()
     
+    if record:
+        usb_camera = USBImageCapture(device_index=6, dim=(1280, 720))
+        usb_camera.start()
+        usb_displayer = USBDisplayer(usb_camera.img_queue)
+        # usb_displayer.start()
+        
+        # Save realsense image and usb images
+        BASE_SAVE_PATH = "./record_save_repo"
+        os.makedirs(BASE_SAVE_PATH, exist_ok=True)
+
+        # 시작 시간 폴더 생성
+        start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_path = os.path.join(BASE_SAVE_PATH, start_time)
+        os.makedirs(session_path, exist_ok=True)
+
+        # 하위 폴더 생성
+        realsense_path = os.path.join(session_path, "realsense")
+        usb_cam_path = os.path.join(session_path, "usb_cam")
+        os.makedirs(realsense_path, exist_ok=True)
+        os.makedirs(usb_cam_path, exist_ok=True)
+
+        # 타임스탬프 파일 경로
+        realsense_timestamps = os.path.join(realsense_path, "timestamps.txt")
+        usb_cam_timestamps = os.path.join(usb_cam_path, "timestamps.txt")
+        
+        # Recorder 스레드 생성
+        realsense_recorder = RecorderThread(realsense_thread.img_queue, realsense_path, realsense_timestamps, fps=30)
+        usb_recorder = RecorderThread(usb_camera.img_queue, usb_cam_path, usb_cam_timestamps, fps=30)
+        
+        # Recorder 스레드 시작
+        realsense_recorder.start()
+        usb_recorder.start()
+
     if not args.reset:
         main()
     elif args.reset:
         # state_machine.reset()
         state_machine.reset_tmp()
-
-
-# 추가해야할거
-# camera view 수정
-
-# Model inference
-# Go to model output
