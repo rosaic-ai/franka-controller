@@ -117,6 +117,22 @@ class ImageDisplayer(threading.Thread):
 
 class GetImageThread():
     def __init__(self, serial_number, dim=(848, 480), fps=15, depth=False):
+        self.cap = RSCapture(name='wrist_2', serial_number=serial_number, dim=dim, fps=fps, depth=depth)
+        self.img_queue = queue.Queue()
+        
+    def fetch_images(self):
+        ret, frame = self.cap.read()
+        if ret:
+            processed_frame = self.image_processing(frame)
+            self.img_queue.put(processed_frame)
+        return processed_frame
+
+    def close(self):
+        self.cap.close()
+        self.img_queue.put(None)
+
+class GetImageThread():
+    def __init__(self, serial_number, dim=(848, 480), fps=15, depth=False):
         self.cap = RSCapture(name='wrist_1', serial_number=serial_number, dim=dim, fps=fps, depth=depth)
         self.img_queue = queue.Queue()
         

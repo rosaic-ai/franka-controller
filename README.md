@@ -32,7 +32,9 @@ realtime_config: ignore
 1. Launch the robot server, which run the robot controller and a Flask server which streams robot commands to the gym envionrment using HTTP requests. 
     ```bash
     conda activate vc_controller
-    python robot_infra/custom_server.py --robot_ip=<robot_IP> --gripper_dist=<gripper_dist>
+    
+    python robot_infra/custom_server.py --robot_ip 172.27.190.2 
+
     ```
     | Flags | Description |
     | --- | --- |
@@ -81,7 +83,7 @@ realtime_config: ignore
 
 2. Create an instance of the gym environment in a second terminal.
     ```bash
-    python vc_controller.py --gripper close --reset 1
+    python vc_controller.py --gripper close --reset 0 --port 9094
     ```
 3. Using 3D space mouse for robot action data sampling
     3D space mouse interface code

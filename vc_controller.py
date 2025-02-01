@@ -2,6 +2,8 @@ import numpy as np
 import time
 import argparse
 from modules.config import Config
+import signal
+import sys
 
 from scipy.spatial.transform import Rotation as R
 from robot_infra.envs.franka_vc_env import FrankaVC, GetImageThread, ImageDisplayer, USBImageCapture, USBDisplayer, RecorderThread
@@ -31,6 +33,27 @@ force_torque_pub = rospy.Publisher('ee_force_torque', WrenchStamped, queue_size=
 last_camera_fetch_time = 0
 last_pose_fetch_time = 0
 last_force_fetch_time = 0
+
+def signal_handler(sig, frame):
+    print('\n프로그램을 안전하게 종료합니다...')
+    
+    # Clean up camera resources
+    realsense_thread.stop()
+    realsense_displayer.stop()
+    
+    if record:
+        usb_camera.stop()
+        # usb_displayer.stop()
+        realsense_recorder.stop()
+        usb_recorder.stop()
+    
+    # Clean up robot control
+    control.stop()
+    
+    # Clean up ROS node
+    rospy.signal_shutdown('User interrupted')
+    
+    sys.exit(0)
 
 def get_argparser():
     parser = argparse.ArgumentParser(description="Control parameters for robot simulation.")
@@ -107,12 +130,6 @@ def _publish_ft_topic(initial_force_torque):
     force_torque_msg = WrenchStamped()
     force_torque_msg.header.stamp = rospy.Time.now()
     force_torque_msg.header.frame_id = 'ee_frame'
-    # force_torque_msg.wrench.force.x = curr_force[0]
-    # force_torque_msg.wrench.force.y = curr_force[1]
-    # force_torque_msg.wrench.force.z = curr_force[2]
-    # force_torque_msg.wrench.torque.x = curr_torque[0]
-    # force_torque_msg.wrench.torque.y = curr_torque[1]
-    # force_torque_msg.wrench.torque.z = curr_torque[2]
     
     force_torque_msg.wrench.force.x  = (curr_force[0] - initial_force_torque[0])
     force_torque_msg.wrench.force.y  = (curr_force[1] - initial_force_torque[1])
@@ -123,7 +140,7 @@ def _publish_ft_topic(initial_force_torque):
         
     force_torque_pub.publish(force_torque_msg)
 
-def _get_observation(initial_force_torque, time_step, black_pixel_prob=0.4, add_noise=False):
+def _get_observation(initial_force_torque, time_step, black_pixel_prob=0.6, add_noise=True):
     # Fetch the latest image
     get_img = realsense_thread.fetch_images()
 
@@ -145,28 +162,13 @@ def _get_observation(initial_force_torque, time_step, black_pixel_prob=0.4, add_
     curr_force = control.get_ee_force()['force']  
     curr_torque = control.get_ee_torque()['torque']
 
-    # if add_noise:
-    #     force_noise_std = 1
-    #     torque_noise_std = 10000
-    #     force_noise = np.random.normal(0, force_noise_std, size=len(curr_force))  # 가우시안 노이즈
-    #     curr_force = np.array(curr_force) + force_noise
-
-    #     torque_noise = np.random.normal(0, torque_noise_std, size=len(curr_torque))  # 가우시안 노이즈
-    #     curr_torque = np.array(curr_torque) + torque_noise
-
     force_array = -(np.array(curr_force) - initial_force_torque[:3])
     torque_array = -(np.array(curr_torque) - initial_force_torque[3:])
     curr_ee_ft = np.concatenate((force_array, torque_array))
-
-    # force_array = np.array(curr_force)
-    # torque_array = np.array(curr_torque)
-    # curr_ee_ft = np.concatenate((force_array, torque_array))    
     
     curr_joint_pos = control.get_joint_pos()
 
     return get_img, curr_ee_pose, curr_ee_trans, curr_ee_quat, curr_ee_ft, curr_joint_pos
-
-import time
 
 def _get_observation_for_debugging():
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -217,9 +219,7 @@ def _get_observation_for_debugging():
     
     return get_img, curr_ee_pose, curr_ee_pose['pose'][:3], curr_ee_pose['pose'][3:], curr_ee_ft, curr_joint_pos
 
-
 def fetch_all_observation(get_img, curr_joint_pos, curr_contact, curr_pose):
-    
     processed_img = process_image(get_img)
 
     timestamp = time.time()  # Get current time for all observations to maintain uniformity
@@ -263,7 +263,6 @@ def synchronize_data(observation_data):
 
     return synced_data
 
-
 def send_data(sock, data):
     """데이터를 전송하는 함수"""
     serialized_data = pickle.dumps(data)
@@ -277,6 +276,9 @@ def receive_result(sock):
     return pickle.loads(result)
 
 def main():
+    # Register signal handler
+    signal.signal(signal.SIGINT, signal_handler)
+    
     last_state = None
     waypoints = []
     start_pos = None
@@ -305,7 +307,7 @@ def main():
     end_insertion_timer = None
 
     # 설정값
-    force_threshold = 4  # 힘의 임계값
+    force_threshold = 5  # 힘의 임계값
     stuck_duration_threshold = 5  # 걸린 상태 감지 시간 (초)
     last_force_check_time = time.time()  # 힘 검사를 시작한 마지막 시간
 
@@ -320,14 +322,11 @@ def main():
         if loop_counter > 0:
             loop_interval = current_time - last_time
             loop_freq = 1 / loop_interval if loop_interval else 0
-            # print(f"Loop Frequency: {loop_freq:.2f} Hz")
         last_time = current_time
-        
 
         # 타임스텝을 _get_observation에 전달
         get_img, curr_ee_pose, curr_ee_trans, curr_ee_quat, curr_contact, curr_joint = _get_observation(
-            initial_force_torque, time_step=loop_counter, black_pixel_prob=0.0, add_noise=True # black_pixel_prob 예시 값
-        )
+            initial_force_torque, time_step=loop_counter, black_pixel_prob=0.6, add_noise=False)
         obs_with_timestamp = fetch_all_observation(get_img, curr_joint, curr_contact, curr_ee_pose)
         synced_obs = synchronize_data(obs_with_timestamp)
         
@@ -338,7 +337,7 @@ def main():
 
         # OpenCV로 이미지 시각화
         cv2.imshow("Image with Noise", get_img)
-        cv2.waitKey(1)  # 짧은 시간 대기 (1ms)
+        cv2.waitKey(1)
         
         # Reset sensors
         if current_state == State.ZERO_FORCE.value: 
@@ -348,7 +347,6 @@ def main():
             target_pose, current_state, gripper_state = state_machine.update_state(synced_pose[:3], synced_pose[3:], synced_contact, spiral_step)
             print(f"Current State: {State(current_state).name}")
 
-                
             if current_state == State.MOVE_TO_PREDICTED_POSE.value: 
                 start_insertion_timer = time.time()
 
@@ -361,14 +359,11 @@ def main():
                 curr_euler = start_curr_euler
                 
         else:
-            # print("Managing state internally")
-        
-            if current_state == State.MOVE_TO_PREDICTED_POSE.value: #MOVE_TO_PREDICTED_POSE, CONTACT_AND_MOVE, LOWER_TO_HOLE
+            if current_state == State.MOVE_TO_PREDICTED_POSE.value:
                 if loop_counter % 1 == 0:               
                     
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         s.connect((host, port))
-                        # print(f"서버 {host}:{port}에 연결되었습니다.")
 
                         data = {
                             "images": synced_img,
@@ -377,20 +372,18 @@ def main():
                         }
 
                         send_data(s, data)
-
                         result = receive_result(s)
                         pred_action = result['action']
                     
-                    position_scale = 3 # 2
-                    orientation_scale = 2 #25
+                    position_scale = 2
+                    orientation_scale = 1.5
                     
                     # Get predicted action
                     pred_delta_pos = [x * position_scale for x in pred_action[:2]]
-                    # pred_delta_pos = pred_action[:2]
-                    perturbation = np.random.normal(0, 0.0004, size=2)  # 2D perturbation for x, y
+                    perturbation = np.random.normal(0, 0.0004, size=2)
                     pred_delta_pos = [x + p for x, p in zip(pred_delta_pos, perturbation)]
 
-                    force_threshold = 5  # Force threshold in Newtons   
+                    force_threshold = 5
                     is_inserting = False
 
                     # Insert
@@ -400,62 +393,38 @@ def main():
                         print("Insertion")
                         is_inserting = True
                         
-                    
                     elif abs(synced_contact[0]) > force_threshold or abs(synced_contact[1]) > force_threshold:
                             print("High force detected. Adjusting target position upwards.")
-                            target_pos[2] += 0.0007  # Raise the z-position slightly to release the end-effector
+                            target_pos[2] += 0.0007
                     else:
                         if pred_delta_pos[0] < 0:
-                            # pred_delta[0]이 음수일 때, 더 많이 움직이도록 조정
-                            pred_delta_pos[0] -= 0.001  # 값을 더 감소시켜 더 많이 움직이도록 설정
+                            pred_delta_pos[0] -= 0.001
                         target_pos = curr_pos[:2] + pred_delta_pos
                         target_pos = np.array([*target_pos, curr_pos[2]])
                         target_pos[2] = state_target_trans['contact_and_move'][2]
 
-                    # # Absolute quartertion
-                    # pred_abs_quat = pred_action[3:7]  # absolute quaternion
-                    # pred_abs_euler = R.from_quat(pred_abs_quat).as_euler('xyz', degrees=True)
-                    # pred_abs_euler[2] = pred_abs_euler[2]*2
-                    # target_quat = R.from_euler('xyz', pred_abs_euler, degrees=True).as_quat()
-                    
                     if not is_inserting:
-                    
                         pred_delta_magnitued = np.linalg.norm(pred_delta_pos)
-                        # Delta Euler angles
                         if pred_delta_magnitued > 0.0013:
                             scale = 0.1
                         else:
                             scale = 0.02
-                        # z축 각도의 절대값을 계산
-                        angle_magnitude = abs(curr_euler[2])  # curr_euler[2]는 z축 회전 각도
+                        angle_magnitude = abs(curr_euler[2])
 
-                        # curr_euler[2]의 부호에 따라 회전 방향을 강화하거나 억제
                         if curr_euler[2] < 0:
-                            # 음수일 경우 음수 방향으로 더 많이 돌리게
-                            scaling_factor = 1 + angle_magnitude / scale  # 각도에 따라 스케일 조정
+                            scaling_factor = 1 + angle_magnitude / scale
                         else:
-                            # 양수일 경우 양수 방향으로 더 많이 돌리게
                             scaling_factor = 1 + angle_magnitude / scale
 
-                        # 예측된 delta euler z값을 scaling_factor로 조정
                         pred_delta_euler_z = pred_action[3] * orientation_scale * scaling_factor
-
-                        # 작은 랜덤 섭동 추가
-                        perturbation = np.random.normal(-2, 2, size=1)  # z 방향으로 1D 섭동
+                        perturbation = np.random.normal(-2, 2, size=1)
                         pred_delta_euler_z += perturbation[0]
                         
-                        # delta
-                        target_euler_z = curr_euler[2] + pred_delta_euler_z # update the target euler angles
-                        # absolute
-                        # target_euler_z = pred_delta_euler_z
-
+                        target_euler_z = curr_euler[2] + pred_delta_euler_z
                         target_euler_new = np.array([*curr_euler[:2], target_euler_z])                    
-                        target_quat_new = R.from_euler('xyz', target_euler_new, degrees=True).as_quat() # change euler to quaternion
+                        target_quat_new = R.from_euler('xyz', target_euler_new, degrees=True).as_quat()
 
-                    # Concat the target position and orientation
                     target_pose = np.concatenate((target_pos, target_quat_new))
-
-                    # Update the current position and orientation
                     curr_pos = target_pos
 
                     if curr_ee_trans[2] < state_target_trans['done'][2]:
@@ -483,65 +452,80 @@ def main():
         loop_counter += 1
 
 if __name__ == "__main__":
-    
-    parser = get_argparser()
-    args = parser.parse_args()
-    config_robot = Config(args.config_robot).get_config()
-    record = args.record
+    try:
+        parser = get_argparser()
+        args = parser.parse_args()
+        config_robot = Config(args.config_robot).get_config()
+        record = args.record
 
-    if args.gripper == 'close':
-        start_gripper = 0
-    else:
-        start_gripper = 1
-    
-    state_target_trans = config_robot.get('state_target_trans', {})
-    state_target_ori   = config_robot.get('state_target_ori', {})
-    state_pose_thres   = config_robot.get('state_pose_thres', {})
-    
-    # Define the Franka controller
-    control = FrankaVC(config_robot=config_robot, hz=30, start_gripper=start_gripper) # if 1, keep close
-    state_machine = RobotStateMachine(device='cpu', config_robot=config_robot)
-    
-    # Get Images
-    realsense_thread = GetImageThread(serial_number='427622270633', dim=(848, 480), fps=30, depth=False)
-    realsense_displayer = ImageDisplayer(realsense_thread.img_queue)
-    realsense_displayer.start()
-    
-    if record:
-        usb_camera = USBImageCapture(device_index=6, dim=(1280, 720))
-        usb_camera.start()
-        usb_displayer = USBDisplayer(usb_camera.img_queue)
-        # usb_displayer.start()
+        if args.gripper == 'close':
+            start_gripper = 0
+        else:
+            start_gripper = 1
         
-        # Save realsense image and usb images
-        BASE_SAVE_PATH = "./record_save_repo"
-        os.makedirs(BASE_SAVE_PATH, exist_ok=True)
-
-        # 시작 시간 폴더 생성
-        start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_path = os.path.join(BASE_SAVE_PATH, start_time)
-        os.makedirs(session_path, exist_ok=True)
-
-        # 하위 폴더 생성
-        realsense_path = os.path.join(session_path, "realsense")
-        usb_cam_path = os.path.join(session_path, "usb_cam")
-        os.makedirs(realsense_path, exist_ok=True)
-        os.makedirs(usb_cam_path, exist_ok=True)
-
-        # 타임스탬프 파일 경로
-        realsense_timestamps = os.path.join(realsense_path, "timestamps.txt")
-        usb_cam_timestamps = os.path.join(usb_cam_path, "timestamps.txt")
+        state_target_trans = config_robot.get('state_target_trans', {})
+        state_target_ori   = config_robot.get('state_target_ori', {})
+        state_pose_thres   = config_robot.get('state_pose_thres', {})
         
-        # Recorder 스레드 생성
-        realsense_recorder = RecorderThread(realsense_thread.img_queue, realsense_path, realsense_timestamps, fps=30)
-        usb_recorder = RecorderThread(usb_camera.img_queue, usb_cam_path, usb_cam_timestamps, fps=30)
+        # Define the Franka controller
+        control = FrankaVC(config_robot=config_robot, hz=30, start_gripper=start_gripper)
+        state_machine = RobotStateMachine(device='cpu', config_robot=config_robot)
         
-        # Recorder 스레드 시작
-        realsense_recorder.start()
-        usb_recorder.start()
+        # Get Images
+        realsense_thread = GetImageThread(serial_number='427622270633', dim=(848, 480), fps=30, depth=False)
+        realsense_displayer = ImageDisplayer(realsense_thread.img_queue)
+        realsense_displayer.start()
+        
+        if record:
+            usb_camera = USBImageCapture(device_index=6, dim=(1280, 720))
+            usb_camera.start()
+            usb_displayer = USBDisplayer(usb_camera.img_queue)
+            
+            BASE_SAVE_PATH = "./record_save_repo"
+            os.makedirs(BASE_SAVE_PATH, exist_ok=True)
 
-    if not args.reset:
-        main()
-    elif args.reset:
-        # state_machine.reset()
-        state_machine.reset_tmp()
+            start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            session_path = os.path.join(BASE_SAVE_PATH, start_time)
+            os.makedirs(session_path, exist_ok=True)
+
+            realsense_path = os.path.join(session_path, "realsense")
+            usb_cam_path = os.path.join(session_path, "usb_cam")
+            os.makedirs(realsense_path, exist_ok=True)
+            os.makedirs(usb_cam_path, exist_ok=True)
+
+            realsense_timestamps = os.path.join(realsense_path, "timestamps.txt")
+            usb_cam_timestamps = os.path.join(usb_cam_path, "timestamps.txt")
+            
+            realsense_recorder = RecorderThread(realsense_thread.img_queue, realsense_path, realsense_timestamps, fps=30)
+            usb_recorder = RecorderThread(usb_camera.img_queue, usb_cam_path, usb_cam_timestamps, fps=30)
+            
+            realsense_recorder.start()
+            usb_recorder.start()
+
+        if not args.reset:
+            main()
+        elif args.reset:
+            state_machine.reset_tmp()
+            
+    except KeyboardInterrupt:
+        print('\n프로그램이 사용자에 의해 중단되었습니다.')
+    finally:
+        # Cleanup code in case of any exception
+        if 'realsense_thread' in locals():
+            realsense_thread.stop()
+        if 'realsense_displayer' in locals():
+            realsense_displayer.stop()
+        
+        if record:
+            if 'usb_camera' in locals():
+                usb_camera.stop()
+            if 'realsense_recorder' in locals():
+                realsense_recorder.stop()
+            if 'usb_recorder' in locals():
+                usb_recorder.stop()
+        
+        if 'control' in locals():
+            control.stop()
+        
+        if rospy.is_initialized():
+            rospy.signal_shutdown('Program ended')
