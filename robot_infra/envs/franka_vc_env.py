@@ -189,7 +189,7 @@ class GetImageThread():
 class FrankaVC(gym.Env):
     def __init__(self, 
                  randomReset=np.zeros(6), 
-                 hz = 15,
+                 hz = 100,
                  img_dim=(480, 640), # H x W
                  start_gripper=0,
                  config_robot=None
@@ -238,23 +238,6 @@ class FrankaVC(gym.Env):
         )
         self.img_dim = img_dim
         self.observation_space = spaces.Dict({
-                                'side_1': spaces.Box(low=0, high=225, shape=(256, 256, 3), dtype=np.uint8),
-                                'side_1_depth': spaces.Box(low=0, high=225, shape=(img_dim[0], img_dim[1], 1), dtype=np.uint16),
-                                'side_1_full': spaces.Box(low=0, high=225, shape=(img_dim[0], img_dim[1], 4), dtype=np.uint8),
-
-                                'side_2': spaces.Box(low=0, high=225, shape=(256, 256, 3), dtype=np.uint8),
-                                'side_2_depth': spaces.Box(low=0, high=225, shape=(img_dim[0], img_dim[1], 4), dtype=np.uint16),
-                                'side_2_full': spaces.Box(low=0, high=225, shape=(img_dim[0], img_dim[1], 4), dtype=np.uint8),
-                                
-                                'wrist_1': spaces.Box(low=0, high=225, shape=(256, 256, 3), dtype=np.uint8),
-                                'wrist_1_depth': spaces.Box(low=0, high=225, shape=(img_dim[0], img_dim[1], 4), dtype=np.uint16),
-                                'wrist_1_full': spaces.Box(low=0, high=225, shape=(img_dim[0], img_dim[1], 4), dtype=np.uint8),
-                                
-                                'wrist_2': spaces.Box(low=0, high=225, shape=(256, 256, 3), dtype=np.uint8),
-                                'wrist_2_depth': spaces.Box(low=0, high=225, shape=(img_dim[0], img_dim[1], 4), dtype=np.uint16),
-                                'wrist_2_full': spaces.Box(low=0, high=225, shape=(img_dim[0], img_dim[1], 4), dtype=np.uint8),
-                                
-                                
                                 'tcp_pose': spaces.Box(-np.inf, np.inf, shape=(7,)),
                                 'tcp_vel': spaces.Box(-np.inf, np.inf, shape=(6,)),
                                 'gripper_pose': spaces.Box(-1, 1, shape=(1,), dtype=np.int8),
@@ -400,7 +383,7 @@ class FrankaVC(gym.Env):
         response = requests.post(self.url + 'getq')
         state = response.json()
         return state
-
+        
     def go_to_rest(self, jpos=False):
         count = 0
         self.update_currpos()
@@ -504,48 +487,61 @@ class FrankaVC(gym.Env):
         self.lastsent = time.time()
         self.currgrip = 1
     
+    def control_gripper(self, width=0.04):
+        data = {'width': width}
+        requests.post(self.url + 'control_gripper', json=data)
+        # requests.post(self.url + 'control_gripper')
+        
+        self.currgrip = 2
+    
+    # def start_joint_controller(self):
+    #     requests.post(self.url+ 'precision_mode')
+
+    
     def precision_mode(self):
         requests.post(self.url+ 'precision_mode')
 
     def compliance_mode(self):
         requests.post(self.url+ 'compliance_mode')
 
+    def change_to_joint_controller(self):
+        requests.post(self.url+ 'start_joint_controller')
 
-    def insertion_mode(self):
-        self.rpy_bounding_box = gym.spaces.Box(
-            np.array((np.pi - 0.3, -0.3, -np.pi/2)),
-            np.array((np.pi+0.3, 0.3, 5*np.pi/6)),
-            dtype=np.float64
-            )
-        self.xyz_bounding_box = gym.spaces.Box(
-            np.array((0.3, -0.35, 0.06)),
-            np.array((0.82, 0.3, 0.4)),
-            dtype=np.float64
-        )
+    # def insertion_mode(self):
+    #     self.rpy_bounding_box = gym.spaces.Box(
+    #         np.array((np.pi - 0.3, -0.3, -np.pi/2)),
+    #         np.array((np.pi+0.3, 0.3, 5*np.pi/6)),
+    #         dtype=np.float64
+    #         )
+    #     self.xyz_bounding_box = gym.spaces.Box(
+    #         np.array((0.3, -0.35, 0.06)),
+    #         np.array((0.82, 0.3, 0.4)),
+    #         dtype=np.float64
+    #     )
         
-    def freespace_mode(self):
-        self.rpy_bounding_box = gym.spaces.Box(
-            np.array((2*np.pi/3, -np.pi/3, -np.pi/2)),
-            np.array((np.pi, np.pi/3, 5*np.pi/6)),
-            dtype=np.float64
-            )
-        self.xyz_bounding_box = gym.spaces.Box(
-            np.array((0.35, -0.3, 0.02)),
-            np.array((0.82, 0.3, 0.4)),
-            dtype=np.float64
-        )
+    # def freespace_mode(self):
+    #     self.rpy_bounding_box = gym.spaces.Box(
+    #         np.array((2*np.pi/3, -np.pi/3, -np.pi/2)),
+    #         np.array((np.pi, np.pi/3, 5*np.pi/6)),
+    #         dtype=np.float64
+    #         )
+    #     self.xyz_bounding_box = gym.spaces.Box(
+    #         np.array((0.35, -0.3, 0.02)),
+    #         np.array((0.82, 0.3, 0.4)),
+    #         dtype=np.float64
+    #     )
 
-    def grasp_mode(self):
-        self.rpy_bounding_box = gym.spaces.Box(
-            np.array((np.pi - 0.05, -0.05, -np.pi/2)),
-            np.array((np.pi, 0.05, 5*np.pi/6)),
-            dtype=np.float64
-            )
-        self.xyz_bounding_box = gym.spaces.Box(
-            np.array((0.32, -0.3, 0.02)),
-            np.array((0.82, 0.3, 0.4)),
-            dtype=np.float64
-        )
+    # def grasp_mode(self):
+    #     self.rpy_bounding_box = gym.spaces.Box(
+    #         np.array((np.pi - 0.05, -0.05, -np.pi/2)),
+    #         np.array((np.pi, 0.05, 5*np.pi/6)),
+    #         dtype=np.float64
+    #         )
+    #     self.xyz_bounding_box = gym.spaces.Box(
+    #         np.array((0.32, -0.3, 0.02)),
+    #         np.array((0.82, 0.3, 0.4)),
+    #         dtype=np.float64
+    #     )
 
     # def quat_2_euler(self, quat):
     #     # calculates and returns: yaw, pitch, roll from given quaternion

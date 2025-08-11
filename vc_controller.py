@@ -314,6 +314,7 @@ def main():
     state_machine.reset_tmp()
     control.precision_mode()
 
+    collect_ft = []
     while True:
         _publish_ft_topic(initial_force_torque)
 
@@ -332,6 +333,11 @@ def main():
         
         synced_img = synced_obs['camera_data']
         synced_contact = np.array(synced_obs['contact_data'])
+        # (Pdb) synced_contact
+        #array([ 0.17053409, -0.35093738,  3.66809306, -0.45032463,  0.23181329, 0.10818459])
+
+        # save synced_contact as csv
+        
         synced_joint = np.array(synced_obs['joint_data'])
         synced_pose = np.array(synced_obs['pose_data'])       
 
@@ -362,6 +368,8 @@ def main():
             if current_state == State.MOVE_TO_PREDICTED_POSE.value:
                 if loop_counter % 1 == 0:               
                     
+                    collect_ft.append(synced_contact)
+                    
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         s.connect((host, port))
 
@@ -375,8 +383,8 @@ def main():
                         result = receive_result(s)
                         pred_action = result['action']
                     
-                    position_scale = 2
-                    orientation_scale = 1.5
+                    position_scale = 1.5 # 2 arrow, 1.5 , 2pin 1.2
+                    orientation_scale = 1 # 1.2 arrow, 2pin 1
                     
                     # Get predicted action
                     pred_delta_pos = [x * position_scale for x in pred_action[:2]]
@@ -392,7 +400,13 @@ def main():
                         target_pos[2] -= 0.003
                         print("Insertion")
                         is_inserting = True
-                        
+                        # save ft as csv
+                        import csv
+                        with open('ft_data.csv', mode='w', newline='') as file:
+                            writer = csv.writer(file)
+                            writer.writerow(["Force_X", "Force_Y", "Force_Z", "Torque_X", "Torque_Y", "Torque_Z"])
+                            writer.writerows(collect_ft)
+                                
                     elif abs(synced_contact[0]) > force_threshold or abs(synced_contact[1]) > force_threshold:
                             print("High force detected. Adjusting target position upwards.")
                             target_pos[2] += 0.0007
@@ -408,7 +422,7 @@ def main():
                         if pred_delta_magnitued > 0.0013:
                             scale = 0.1
                         else:
-                            scale = 0.02
+                            scale = 0.02 #0.02
                         angle_magnitude = abs(curr_euler[2])
 
                         if curr_euler[2] < 0:

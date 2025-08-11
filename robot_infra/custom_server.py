@@ -19,7 +19,7 @@ from dynamic_reconfigure.client import Client as ReconfClient
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
-    "robot_ip", "173.16.0.2", "IP address of the franka robot's controller box"
+    "robot_ip", "172.27.190.2", "IP address of the franka robot's controller box"
 )
 flags.DEFINE_float("gripper_dist", 0.05, 
                    "Gripper open distance: 0.09 for single-object task, 0.075 for multi-object task")
@@ -60,7 +60,66 @@ class FrankaServer:
             "franka_state_controller/franka_states", FrankaState, self._set_currpos
         )
 
+    def start_joint_controller(self):
+        """Resets Joints (needed after running for hours)"""
+        # First Stop impedance
+        try:
+            self.stop_impedance()
+            self.clear()
+        except:
+            print("impedance Not Running")
+        time.sleep(3)
+        self.clear()
 
+        rospy.set_param("/target_joint_positions", JOINT_RESET_TARGET)
+
+        self.joint_controller = subprocess.Popen(
+            [
+                "roslaunch",
+                "serl_franka_controllers", 
+                "joint_gumi.launch",
+                "robot_ip:=" + FLAGS.robot_ip,
+                f"load_gripper:=true",
+            ],
+            stdout=subprocess.PIPE,
+        )
+        time.sleep(1)
+        print("RUNNING JOINT RESET")
+        self.clear()
+
+        # Wait until target joint angles are reached
+        count = 0
+        time.sleep(1)
+        while not np.allclose(
+            np.array(JOINT_RESET_TARGET) - np.array(self.q),
+            0,
+            atol=1e-2,
+            rtol=1e-2,
+        ):
+            time.sleep(1)
+            count += 1
+            if count > 30:
+                print("joint reset TIMEOUT")
+                break
+    
+    def set_joint(self):
+        rospy.set_param("/target_joint_positions", JOINT_RESET_TARGET)
+        count = 0
+        time.sleep(1)
+        while not np.allclose(
+            np.array(JOINT_RESET_TARGET) - np.array(self.q),
+            0,
+            atol=1e-2,
+            rtol=1e-2,
+        ):
+            time.sleep(1)
+            count += 1
+            if count > 30:
+                print("joint reset TIMEOUT")
+                break
+
+        # Stop joint controller
+        print("RESET DONE")
 
     def start_impedance(self):
         """Launches the impedance controller"""
@@ -68,7 +127,7 @@ class FrankaServer:
             [
                 "roslaunch",
                 "serl_franka_controllers",
-                "impedance.launch",
+                "impedance_gumi.launch",
                 "robot_ip:=" + FLAGS.robot_ip,
                 f"load_gripper:=true",
             ],
@@ -106,7 +165,7 @@ class FrankaServer:
             [
                 "roslaunch",
                 "serl_franka_controllers", 
-                "joint.launch",
+                "joint_gumi.launch",
                 "robot_ip:=" + FLAGS.robot_ip,
                 f"load_gripper:=true",
             ],
@@ -183,7 +242,7 @@ class FrankaServer:
         grasp.goal.speed=0.15
         grasp.goal.epsilon.inner = 1
         grasp.goal.epsilon.outer = 1
-        grasp.goal.force = 100
+        grasp.goal.force = 0.2
         self.grippergrasppub.publish(grasp)
         return 'Closed'
 
@@ -195,6 +254,13 @@ class FrankaServer:
         self.grippermovepub.publish(msg)
         return 'Opened'
 
+    def control_gripper(self, width):
+        print("control gripper")
+        msg = MoveActionGoal()
+        msg.goal.width=width
+        msg.goal.speed=0.15
+        self.grippermovepub.publish(msg)
+        return "Control Gripper"
 
 ###############################################################################
 
@@ -214,6 +280,7 @@ def main(_):
     """Starts impedance controller"""
     robot_server = FrankaServer()
     robot_server.start_impedance()
+    # robot_server.start_joint_controller()
 
     reconf_client = ReconfClient(
         "cartesian_impedance_controllerdynamic_reconfigure_compliance_param_node"
@@ -288,6 +355,18 @@ def main(_):
         robot_server.close()
         return "Closed"
 
+    @webapp.route("/control_gripper", methods=["POST"])
+    def control_gripper():
+        print('set gripper width')
+        data = request.get_json()
+        width = data.get('width', 0.04)
+        print('data: ', data)
+        print(f'set gripper width: {width}')
+        robot_server.control_gripper(width)
+        
+        return "Control Gripper"
+    
+    
     # Route for Clearing Errors (Communcation constraints, etc.)
     @webapp.route("/clearerr", methods=["POST"])
     def clear():
@@ -318,20 +397,27 @@ def main(_):
             }
         )
 
+    @webapp.route("/start_joint_controller", methods=["POST"])
+    def change_controller():
+        robot_server.start_joint_controller()
+        return "Controller Changed"
+
     ## Route for increasing controller gain
     @webapp.route("/precision_mode", methods=["POST"])
     def precision_mode():
         reconf_client.update_configuration({"translational_stiffness": 2000}) #2000
-        reconf_client.update_configuration({"translational_damping": 89}) #80
+        reconf_client.update_configuration({"translational_damping": 80}) #80
         reconf_client.update_configuration({"rotational_stiffness": 150}) #150
         reconf_client.update_configuration({"rotational_damping": 7}) # 7
         reconf_client.update_configuration({"translational_Ki": 10}) #10
-        reconf_client.update_configuration({"rotational_Ki": 0})
+        reconf_client.update_configuration({"rotational_Ki": 5})
         for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
             reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
             reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
         return 'Precision'
         
+        
+    
     # # Route for decreasing controller gain
     # @webapp.route("/compliance_mode", methods=["POST"])
     # def compliance_mode():
@@ -350,7 +436,7 @@ def main(_):
     # Route for decreasing controller gain
     @webapp.route("/compliance_mode", methods=["POST"])
     def compliance_mode():
-        reconf_client.update_configuration({"translational_stiffness": 2000}) #2000
+        reconf_client.update_configuration({"translational_stiffness": 1300}) #2000
         reconf_client.update_configuration({"translational_damping": 89}) #80
         reconf_client.update_configuration({"rotational_stiffness": 150}) #150
         reconf_client.update_configuration({"rotational_damping": 7}) # 7

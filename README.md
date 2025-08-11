@@ -51,7 +51,8 @@ realtime_config: ignore
     | --- | --- |
     | startimp | Stop the impedance controller |
     | stopimp | Start the impedance controller |
-    | pose | Command robot to go to desired end-effector pose given in base frame (xyz+quaternion) |
+    | pose | Command robot to go to desired end-effecto `\
+    r pose given in base frame (xyz+quaternion) |
     | getpos | Return current end-effector pose in robot base frame (xyz+rpy)|
     | getvel | Return current end-effector velocity in robot base frame |
     | getforce | Return estimated force on end-effector |
@@ -84,6 +85,7 @@ realtime_config: ignore
 2. Create an instance of the gym environment in a second terminal.
     ```bash
     python vc_controller.py --gripper close --reset 0 --port 9094
+    python gumi_controller.py --gripper close --port 4999
     ```
 3. Using 3D space mouse for robot action data sampling
     3D space mouse interface code
