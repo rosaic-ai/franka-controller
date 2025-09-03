@@ -179,11 +179,11 @@ class FrankaServer:
     def close(self):
         print("close")
         grasp = GraspActionGoal()
-        grasp.goal.width= 0.01
+        grasp.goal.width= 0.04
         grasp.goal.speed=0.3
         grasp.goal.epsilon.inner = 1
         grasp.goal.epsilon.outer = 1
-        grasp.goal.force = 130
+        grasp.goal.force = 50
         self.grippergrasppub.publish(grasp)
         return 'Closed'
 

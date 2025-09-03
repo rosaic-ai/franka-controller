@@ -224,9 +224,9 @@ def main():
 
     # 로봇 초기화
     config_robot = Config(args.config_robot).get_config()
-    control = FrankaVC(config_robot=config_robot, hz=100, start_gripper=start_gripper)
-    control.precision_mode()
-    # control.compliance_mode()
+    control = FrankaVC(config_robot=config_robot, hz=200, start_gripper=start_gripper)
+    # control.precision_mode()
+    control.compliance_mode()
 
     try:
         # 로봇을 초기 자세로 이동
