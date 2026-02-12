@@ -298,6 +298,8 @@ def main():
     # Get screen resolution and set window to a reasonable size
     screen_width = 1920  # Default fallback
     screen_height = 1080
+    
+    
     try:
         import tkinter as tk
         root = tk.Tk()
@@ -365,8 +367,80 @@ def main():
             cv2.imshow(args.window, frame_bgr)
 
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
+            # Detect window close (X button)
+            window_visible = True
+            try:
+                window_visible = cv2.getWindowProperty(args.window, cv2.WND_PROP_VISIBLE) >= 1
+            except Exception:
+                window_visible = False
+
+            want_quit = (key == ord('q'))
+            want_soft_close = (key == ord('x')) or (not window_visible)
+            if want_quit or want_soft_close:
+                if is_recording:
+                    # Ask user whether to save or discard current recording
+                    prompt_frame = frame_bgr.copy()
+                    overlay = prompt_frame.copy()
+                    h, w = prompt_frame.shape[:2]
+                    cv2.rectangle(overlay, (int(w*0.15), int(h*0.4)), (int(w*0.85), int(h*0.6)), (0, 0, 0), -1)
+                    cv2.addWeighted(overlay, 0.6, prompt_frame, 0.4, 0, prompt_frame)
+                    cv2.putText(prompt_frame, "Save current recording? (y/n)", (int(w*0.2), int(h*0.5)), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255,255,255), 2, cv2.LINE_AA)
+                    cv2.imshow(args.window, prompt_frame)
+
+                    choice = None
+                    while True:
+                        k = cv2.waitKey(0) & 0xFF
+                        if k in (ord('y'), ord('Y')):
+                            choice = 'y'
+                            break
+                        if k in (ord('n'), ord('N')):
+                            choice = 'n'
+                            break
+                        # If window was closed during prompt, treat as save to be safe
+                        try:
+                            if cv2.getWindowProperty(args.window, cv2.WND_PROP_VISIBLE) < 1:
+                                choice = 'y'
+                                break
+                        except Exception:
+                            choice = 'y'
+                            break
+
+                    if choice == 'y':
+                        if want_quit:
+                            # On explicit quit, stop and exit
+                            bg_writer.stop_recording()
+                            time.sleep(0.05)
+                            print(f"Recording saved: {output_path}")
+                            break
+                        else:
+                            # On window close/x, keep recording and do not exit
+                            print("Continuing recording; window close canceled.")
+                            # fall through to continue loop without stopping
+                    else:
+                        # Discard: stop and delete file; return to idle, preserve episode number for next start
+                        bg_writer.stop_recording()
+                        time.sleep(0.05)
+                        try:
+                            if output_path and os.path.isfile(output_path):
+                                os.remove(output_path)
+                                print(f"Recording discarded: {output_path}")
+                        except Exception as e:
+                            print(f"Failed to delete file: {output_path} ({e})")
+
+                        try:
+                            base = os.path.basename(output_path) if output_path else ''
+                            idx = int(base.replace('exp_','').replace('.mp4','')) if base.startswith('exp_') else get_next_exp_index(effective_output_dir)
+                            next_index = idx
+                        except Exception:
+                            next_index = get_next_exp_index(effective_output_dir)
+
+                        is_recording = False
+                        record_start_time = None
+                        output_path = None
+                        # Stay in app; user can press 'r' to start again
+                else:
+                    if want_quit:
+                        break
             elif key == ord('r'):
                 # Start or rollover to a new recording file
                 if is_recording:

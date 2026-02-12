@@ -1,5 +1,5 @@
 """
-구미 로봇 제어 서버
+Franka 로봇 제어 서버
 - 로봇을 초기 자세로 이동 후 클라이언트의 명령을 받아 제어
 """
 
@@ -87,14 +87,7 @@ def _publish_ft_topic(control, initial_force_torque, force_torque_pub):
     force_torque_msg = WrenchStamped()
     force_torque_msg.header.stamp = rospy.Time.now()
     force_torque_msg.header.frame_id = 'ee_frame'
-    
-    # force_torque_msg.wrench.force.x  = (curr_force[0] - initial_force_torque[0])
-    # force_torque_msg.wrench.force.y  = (curr_force[1] - initial_force_torque[1])
-    # force_torque_msg.wrench.force.z  = (curr_force[2] - initial_force_torque[2])
-    # force_torque_msg.wrench.torque.x = (curr_torque[0] - initial_force_torque[3])
-    # force_torque_msg.wrench.torque.y = (curr_torque[1] - initial_force_torque[4])
-    # force_torque_msg.wrench.torque.z = (curr_torque[2] - initial_force_torque[5])
-        
+
     force_torque_msg.wrench.force.x  = (curr_force[0])
     force_torque_msg.wrench.force.y  = (curr_force[1])
     force_torque_msg.wrench.force.z  = (curr_force[2])
@@ -225,8 +218,8 @@ def main():
     # 로봇 초기화
     config_robot = Config(args.config_robot).get_config()
     control = FrankaVC(config_robot=config_robot, hz=200, start_gripper=start_gripper)
-    # control.precision_mode()
-    control.compliance_mode()
+    control.precision_mode()
+    # control.compliance_mode()
 
     try:
         # 로봇을 초기 자세로 이동
