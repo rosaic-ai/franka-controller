@@ -15,7 +15,7 @@ All robot code is structured as follows:
 ### Installation
 ```bash
 cd robot_infra
-conda create -n franka_controller python=3.9
+conda create -n franka_controller python=3.10
 conda activate franka_controller
 pip install -e .
 ```

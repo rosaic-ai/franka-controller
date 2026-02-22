@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: robot_infra
 Version: 0.0.1
 Requires-Dist: gym
@@ -16,3 +16,4 @@ Requires-Dist: flask
 Requires-Dist: defusedxml
 Requires-Dist: absl-py==1.4.0
 Requires-Dist: pynput
+Dynamic: requires-dist

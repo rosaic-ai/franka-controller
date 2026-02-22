@@ -222,7 +222,7 @@ class FrankaVC(gym.Env):
         
         # Bouding box
         self.xyz_bounding_box = gym.spaces.Box(
-            np.array((0.35, -0.3, 0.02)),
+            np.array((0.35, -0.3, -0.4)),
             np.array((0.82, 0.3, 0.4)),
             dtype=np.float64
         )

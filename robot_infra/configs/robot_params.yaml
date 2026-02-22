@@ -80,4 +80,4 @@ state_pose_thres:
 
 control_params:
   # pose_limits: [0.30, 0.6, -0.30, 0.30, 0.015, 0.4]
-  pose_limits: [0.30, 1, -0.30, 0.30, 0.00, 0.4]
+  pose_limits: [0.30, 1, -0.30, 0.30, -0.3, 0.4]
