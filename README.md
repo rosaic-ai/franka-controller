@@ -90,7 +90,7 @@ realtime_config: ignore
     ```
 
     *Note: For low-level SpaceMouse testing, you can also use:*
-    ```bash
+    ```bash 
     python robot_infra/spacemouse/spacemouse_custom.py
     ```
 

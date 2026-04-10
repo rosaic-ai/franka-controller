@@ -268,11 +268,11 @@ class FrankaServer:
 def main(_):
     webapp = Flask(__name__)
 
-    try:
-        roscore = subprocess.Popen("roscore")
-        time.sleep(1)
-    except Exception as e:
-        raise Exception("roscore not running", e)
+    # try:
+    #     roscore = subprocess.Popen("roscore")
+    #     time.sleep(1)
+    # except Exception as e:
+    #     raise Exception("roscore not running", e)
 
     # Start ros node
     rospy.init_node("franka_control_api")
@@ -402,7 +402,7 @@ def main(_):
         robot_server.start_joint_controller()
         return "Controller Changed"
 
-    ## Route for increasing controller gain
+    # Route for increasing controller gain
     @webapp.route("/precision_mode", methods=["POST"])
     def precision_mode():
         reconf_client.update_configuration({"translational_stiffness": 2000}) #2000
@@ -418,20 +418,19 @@ def main(_):
         
         
     
-    # # Route for decreasing controller gain
-    # @webapp.route("/compliance_mode", methods=["POST"])
-    # def compliance_mode():
-    #     reconf_client.update_configuration({"translational_stiffness": 1000}) #2000
-    #     reconf_client.update_configuration({"translational_damping": 80}) #80
-    #     reconf_client.update_configuration({"rotational_stiffness":150}) #150
-    #     reconf_client.update_configuration({"rotational_damping": 7}) # 7
-    #     reconf_client.update_configuration({"translational_Ki": 10}) #10
-    #     reconf_client.update_configuration({"rotational_Ki": 0})
+    # # # Route for decreasing controller gain
+    # @webapp.route("/precision_mode", methods=["POST"])
+    # def precision_mode():
+    #     reconf_client.update_configuration({"translational_stiffness": 2000})
+    #     reconf_client.update_configuration({"translational_damping": 89})
+    #     reconf_client.update_configuration({"rotational_stiffness": 150})
+    #     reconf_client.update_configuration({"rotational_damping": 7})
+    #     reconf_client.update_configuration({"translational_Ki": 30})
+    #     reconf_client.update_configuration({"rotational_Ki": 10})
     #     for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-    #         reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
-    #         reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
-    #     return 'Compliance'
-                
+    #         reconf_client.update_configuration({"translational_clip_" + direction: 0.1})
+    #         reconf_client.update_configuration({"rotational_clip_"+ direction: 0.1})
+    #     return 'Precision'
 
     # Route for decreasing controller gain
     @webapp.route("/compliance_mode", methods=["POST"])
