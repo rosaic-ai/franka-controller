@@ -256,7 +256,7 @@ class FrankaVC(gym.Env):
         requests.post(self.url + 'clearerr')
         
     def _send_pos_command(self, pos):
-        self.recover()
+        #self.recover()
         arr = np.array(pos).astype(np.float32)
         data = {"arr": arr.tolist()}
         requests.post(self.url + 'pose', json=data)
@@ -448,16 +448,16 @@ class FrankaVC(gym.Env):
         return count<50
 
     # def reset(self, jpos=None, gripper=0, require_input=True):
-    #     requests.post(self.url+ 'precision_mode')
-    #     self.set_gripper(gripper)
+    #     requests.post(self.url + 'precision_mode')
+    #     # self.set_gripper(gripper)
     #     self.update_currpos()
     #     if jpos == None:
-    #         jpos = (np.abs(self.q[0])>0.3)
+    #         jpos = (np.abs(self.q[0]) > 0.3)
 
     #     success = self.go_to_rest(jpos=jpos)
     #     self.curr_path_length = 0
     #     self.recover()
-    #     if jpos==True:
+    #     if jpos == True:
     #         self.go_to_rest(jpos=False)
     #         self.recover()
 
@@ -466,9 +466,9 @@ class FrankaVC(gym.Env):
     #     self.update_currpos()
     #     # self.last_quat = self.currpos[3:]
     #     o = self._get_obs()
-    #     requests.post(self.url+ 'compliance_mode')
+    #     requests.post(self.url + 'compliance_mode')
 
-        return o
+    #     return o
     
     def open_gripper(self):
         """ Open the gripper. """
