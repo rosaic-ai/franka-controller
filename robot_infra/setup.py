@@ -19,6 +19,7 @@ setup(
         "flask",
         "defusedxml",
         "absl-py==1.4.0",
-        "pynput"
+        "pynput",
+        "easydict"
     ],
 )
