@@ -1,6 +1,6 @@
 """
 This file starts a control server running on the real time PC connected to the franka robot.
-In a screen run `python franka_server.py`
+In a screen run `python custom_server_moon_adv.py`
 
 [moon_adv variant] — MAX-A gains + session logging + q_drift hypothesis verification
 ─────────────────────────────────────────────────────────────────────────────
@@ -37,7 +37,8 @@ import signal
 import threading
 import subprocess
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from scipy.spatial.transform import Rotation as R
 from absl import app, flags
 
@@ -49,6 +50,21 @@ from sensor_msgs.msg import JointState
 import geometry_msgs.msg as geom_msg
 from dynamic_reconfigure.client import Client as ReconfClient
 
+if __package__:
+    from .franka_telemetry import (
+        FrankaUdpPublisher,
+        TelemetryStateStore,
+        build_status_payload,
+        safe_telemetry_update,
+    )
+else:
+    from franka_telemetry import (
+        FrankaUdpPublisher,
+        TelemetryStateStore,
+        build_status_payload,
+        safe_telemetry_update,
+    )
+
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "robot_ip", "172.16.0.2", "IP address of the franka robot's controller box"
@@ -57,6 +73,21 @@ flags.DEFINE_float("gripper_dist", 0.05,
                    "Gripper open distance: 0.09 for single-object task, 0.075 for multi-object task")
 
 flags.DEFINE_bool("force_base_frame", False, "Use base frame for force/torque")
+flags.DEFINE_string(
+    "telemetry_host",
+    "",
+    "ROSAIC UDP telemetry destination; empty disables",
+)
+flags.DEFINE_integer(
+    "telemetry_port",
+    5010,
+    "ROSAIC UDP telemetry port",
+)
+flags.DEFINE_integer(
+    "telemetry_hz",
+    200,
+    "Franka UDP telemetry rate, 1-200 Hz",
+)
 
 JOINT_RESET_TARGET = [-0.07, -0.1, 0.0, -2.5, -0.1, 2.5, -0.6]
 
@@ -244,8 +275,7 @@ Pose markers:   pose_milestones.log
 
 
 def _shutdown_handler(*_):
-    _write_summary(verbose=True, final=True)
-    os._exit(0)
+    raise SystemExit(0)
 
 
 atexit.register(lambda: _write_summary(verbose=True, final=True))
@@ -320,6 +350,7 @@ class FrankaServer:
     (as well as backup) joint recovery policy."""
 
     def __init__(self):
+        self.telemetry_store = TelemetryStateStore()
         self.grippermovepub = rospy.Publisher(
             "/franka_gripper/move/goal", MoveActionGoal, queue_size=1
         )
@@ -484,6 +515,10 @@ class FrankaServer:
         self.eepub.publish(msg)
 
     def _set_currpos(self, msg):
+        safe_telemetry_update(
+            self.telemetry_store.update_franka_state,
+            msg,
+        )
         tmatrix = np.array(list(msg.O_T_EE)).reshape(4, 4).T
         r = R.from_matrix(tmatrix[:3, :3])
         pose = np.concatenate([tmatrix[:3, -1], r.as_quat()])
@@ -500,6 +535,10 @@ class FrankaServer:
             rospy.logwarn("Jacobian not set, end-effector velocity temporarily not available")
 
     def _set_jacobian(self, msg):
+        safe_telemetry_update(
+            self.telemetry_store.update_jacobian,
+            msg,
+        )
         jacobian = np.array(list(msg.zero_jacobian)).reshape((6, 7), order="F")
         self.jacobian = jacobian
 
@@ -539,6 +578,21 @@ class FrankaServer:
 ###############################################################################
 
 
+def _read_server_commit():
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        return result.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
 def main(_):
     # Silence Flask access log (the noisy 127.0.0.1 - - POST ... lines)
     logging.getLogger('werkzeug').setLevel(logging.ERROR)
@@ -554,6 +608,15 @@ def main(_):
     rospy.init_node("franka_control_api")
 
     robot_server = FrankaServer()
+    telemetry_publisher = FrankaUdpPublisher(
+        store=robot_server.telemetry_store,
+        host=FLAGS.telemetry_host,
+        port=FLAGS.telemetry_port,
+        hz=FLAGS.telemetry_hz,
+    )
+    atexit.register(telemetry_publisher.stop)
+    server_commit = _read_server_commit()
+    server_started_at = datetime.now(timezone.utc).astimezone().isoformat()
     robot_server.start_impedance()
 
     robot_server.home_gripper()
@@ -719,6 +782,19 @@ def main(_):
             print(f"Error in get_state: {e}")
             return jsonify({"error": str(e)}), 500
 
+    @webapp.route("/telemetry/status", methods=["GET"])
+    def telemetry_status():
+        return jsonify(
+            build_status_payload(
+                store=robot_server.telemetry_store,
+                publisher_stats=telemetry_publisher.stats_snapshot(),
+                server_commit=server_commit,
+                server_started_at=server_started_at,
+                entrypoint="robot_infra/custom_server_moon_adv.py",
+                now_monotonic_ns=time.monotonic_ns(),
+            )
+        )
+
     @webapp.route("/start_joint_controller", methods=["POST"])
     def change_controller():
         _log_event("CTRL", "/start_joint_controller called")
@@ -789,7 +865,11 @@ def main(_):
             "torque_mag": torque_mag,
         })
 
-    webapp.run(host="0.0.0.0")
+    try:
+        telemetry_publisher.start()
+        webapp.run(host="0.0.0.0")
+    finally:
+        telemetry_publisher.stop()
 
 
 if __name__ == "__main__":

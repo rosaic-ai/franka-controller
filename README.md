@@ -86,7 +86,7 @@ realtime_config: ignore
     on TCP port 4999, which continues to relay motion commands.
 
     ```bash
-    python robot_infra/franka_server.py \
+    python robot_infra/custom_server_moon_adv.py \
       --robot_ip 172.16.0.2 \
       --telemetry_host 20.42.0.54 \
       --telemetry_port 5010 \
@@ -100,7 +100,10 @@ realtime_config: ignore
     `--telemetry_host` empty preserves the existing server behavior without
     opening a UDP socket or starting a telemetry thread.
 
-    The telemetry flags above belong to `robot_infra/franka_server.py`:
+    The deployed telemetry flags above belong to
+    `robot_infra/custom_server_moon_adv.py`. The ROS
+    `franka_state_controller.publish_rate` must also be configured to 200 Hz;
+    otherwise the UDP publisher cannot provide fresh 200 Hz states.
 
     | Flag | Description |
     | --- | --- |
