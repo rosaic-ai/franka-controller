@@ -1,6 +1,17 @@
 """
 This file starts a control server running on the real time PC connected to the franka robot.
 In a screen run `python franka_server.py`
+
+[moon variant - Option MAX-A : 회전 우선 + 안전]
+- K_t=1500, clip_t=0.018 → max F_EE = 27 N (병진 손목 부하 4.05 N·m)
+- K_r=160,  clip_r=0.035 → max τ_EE = 5.6 N·m (회전 손목 부하 5.6 N·m, woo의 75%)
+- spring 최대 손목 토크 ≈ 9.65 N·m
+  motion 중 damping ~2 N·m 추가 → peak ~11.65 N·m
+  HW 12 N·m 한계 안에 마진 확보 (yaml soft threshold 11 N·m)
+- nullspace_stiffness=5.0  → joint drift 억제 (노란 LED 빈도 ↓)
+- joint1_nullspace_stiffness=10.0  → joint 1 별도 보정
+- D_t=77 (critical for K_t=1500), D_r=8 (slight overdamped for K_r=160)
+- Ki=0  (접촉 task 적분 누적 방지)
 """
 import _bootlocale
 _bootlocale.getpreferredencoding = lambda *args: 'UTF-8'
@@ -26,7 +37,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "robot_ip", "172.16.0.2", "IP address of the franka robot's controller box"
 )
-flags.DEFINE_float("gripper_dist", 0.05, 
+flags.DEFINE_float("gripper_dist", 0.05,
                    "Gripper open distance: 0.09 for single-object task, 0.075 for multi-object task")
 
 flags.DEFINE_bool("force_base_frame", False, "Use base frame for force/torque")
@@ -94,7 +105,7 @@ class FrankaServer:
         self.joint_controller = subprocess.Popen(
             [
                 "roslaunch",
-                "serl_franka_controllers", 
+                "serl_franka_controllers",
                 "joint_gumi.launch",
                 "robot_ip:=" + FLAGS.robot_ip,
                 f"load_gripper:=true",
@@ -119,7 +130,7 @@ class FrankaServer:
             if count > 30:
                 print("joint reset TIMEOUT")
                 break
-    
+
     def set_joint(self):
         rospy.set_param("/target_joint_positions", JOINT_RESET_TARGET)
         count = 0
@@ -169,14 +180,12 @@ class FrankaServer:
         self.clear()
 
         # Launch joint controller reset
-        # set rosparm with rospkg
-        # rosparam set /target_joint_positions '[q1, q2, q3, q4, q5, q6, q7]'
         rospy.set_param("/target_joint_positions", JOINT_RESET_TARGET)
 
         self.joint_controller = subprocess.Popen(
             [
                 "roslaunch",
-                "serl_franka_controllers", 
+                "serl_franka_controllers",
                 "joint_gumi.launch",
                 "robot_ip:=" + FLAGS.robot_ip,
                 f"load_gripper:=true",
@@ -242,10 +251,10 @@ class FrankaServer:
     def _set_jacobian(self, msg):
         jacobian = np.array(list(msg.zero_jacobian)).reshape((6, 7), order="F")
         self.jacobian = jacobian
-        
+
     def _update_gripper(self, msg):
         self.gripper_pos = np.sum(msg.position)
-        
+
 
     def close(self):
         print("close")
@@ -294,7 +303,6 @@ def main(_):
     """Starts impedance controller"""
     robot_server = FrankaServer()
     robot_server.start_impedance()
-    # robot_server.start_joint_controller()
 
     # 그리퍼 homing (franka_gripper 노드가 뜬 직후 자동 homing이 안 됐을 경우 대비)
     robot_server.home_gripper()
@@ -304,47 +312,33 @@ def main(_):
         "/cartesian_impedance_controller/dynamic_reconfigure_compliance_param_node"
     )
 
-    # # 서버 시작 시 안전한 기본값으로 초기화 (precision_mode)
-    # print("[INIT] Resetting to precision mode (stiffness=2000, clip=0.1)")
-    # reconf_client.update_configuration({"translational_stiffness": 2000})
-    # reconf_client.update_configuration({"translational_damping": 89})
-    # reconf_client.update_configuration({"rotational_stiffness": 150})
-    # reconf_client.update_configuration({"rotational_damping": 7})
-    # # nullspace: joint1_nullspace_stiffness(기본 100) × nullspace_stiffness 곱이 커지면
-    # # 시작 시 joint drift에 의해 joint_velocity_violation 발생 → 낮게 유지
-    # reconf_client.update_configuration({"nullspace_stiffness": 2.0})
-    # reconf_client.update_configuration({"joint1_nullspace_stiffness": 10.0})
-    # for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-    #     reconf_client.update_configuration({"translational_clip_" + direction: 0.1})
-    #     reconf_client.update_configuration({"rotational_clip_"+ direction: 0.1})
-    # # Ki를 켜기 전에 현재 위치를 equilibrium으로 전송 → error_i.setZero() 트리거
-    # # (누적된 적분항이 갑작스런 힘을 유발하는 것을 방지)
-    # robot_server.move(robot_server.pos.tolist())
-    # time.sleep(0.2)
-    # reconf_client.update_configuration({"translational_Ki": 0})
-    # reconf_client.update_configuration({"rotational_Ki": 0})
-    # print("[INIT] Impedance parameters reset complete")
-
-    # 서버 시작 시 안전한 기본값으로 초기화 (precision_mode)
-    print("[INIT] Resetting to precision mode (stiffness=800, clip=0.1)")
-    reconf_client.update_configuration({"translational_stiffness": 2000})
-    reconf_client.update_configuration({"translational_damping": 80})
-    reconf_client.update_configuration({"rotational_stiffness": 150})
-    reconf_client.update_configuration({"rotational_damping": 7})
-    # nullspace: joint1_nullspace_stiffness(기본 100) × nullspace_stiffness 곱이 커지면
-    # 시작 시 joint drift에 의해 joint_velocity_violation 발생 → 낮게 유지
-    reconf_client.update_configuration({"nullspace_stiffness": 2.0})
+    # ==========================================================================
+    # [INIT] Option MAX-A — 회전 우선 + 안전
+    #   손목 토크 = K_t × clip_t × lever(0.15m) + K_r × clip_r
+    #             = 1500 × 0.018 × 0.15 + 160 × 0.035
+    #             = 4.05 + 5.60 = 9.65 N·m  (spring 최대)
+    #   motion 중 damping ~2 N·m 추가 → peak ~11.65 N·m  ≤ yaml soft 11
+    # ==========================================================================
+    print("[INIT] Resetting to MAX-A gains "
+          "(K_t=1500, clip_t=0.018, K_r=160, clip_r=0.035, nullspace=5.0)")
+    reconf_client.update_configuration({"translational_stiffness": 1500})
+    reconf_client.update_configuration({"translational_damping": 77})    # 2√1500 ≈ 77 (critical)
+    reconf_client.update_configuration({"rotational_stiffness": 160})
+    reconf_client.update_configuration({"rotational_damping": 8})        # slight overdamped
+    # nullspace 5.0: joint drift 억제 (노란 LED 빈도 ↓, 흔들림 ↓)
+    # joint1_ns 10 × ns 5 = 50 effective (joint1 별도 보정)
+    reconf_client.update_configuration({"nullspace_stiffness": 5.0})
     reconf_client.update_configuration({"joint1_nullspace_stiffness": 10.0})
     for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-        reconf_client.update_configuration({"translational_clip_" + direction: 0.04})
-        reconf_client.update_configuration({"rotational_clip_"+ direction: 0.05})
+        reconf_client.update_configuration({"translational_clip_" + direction: 0.018})
+        reconf_client.update_configuration({"rotational_clip_"+ direction: 0.035})
     # Ki를 켜기 전에 현재 위치를 equilibrium으로 전송 → error_i.setZero() 트리거
     # (누적된 적분항이 갑작스런 힘을 유발하는 것을 방지)
     robot_server.move(robot_server.pos.tolist())
     time.sleep(0.2)
     reconf_client.update_configuration({"translational_Ki": 0})
     reconf_client.update_configuration({"rotational_Ki": 0})
-    print("[INIT] Impedance parameters reset complete")
+    print("[INIT] Impedance parameters reset complete (MAX-A)")
 
 
     # Route for Starting impedance
@@ -423,10 +417,10 @@ def main(_):
         print('data: ', data)
         print(f'set gripper width: {width}')
         robot_server.control_gripper(width)
-        
+
         return "Control Gripper"
-    
-    
+
+
     # Route for Clearing Errors (Communcation constraints, etc.)
     @webapp.route("/clearerr", methods=["POST"])
     def clear():
@@ -465,50 +459,24 @@ def main(_):
         robot_server.start_joint_controller()
         return "Controller Changed"
 
-    # Route for increasing controller gain
-    # @webapp.route("/precision_mode", methods=["POST"])
-    # def precision_mode():
-    #    reconf_client.update_configuration({"translational_stiffness": 2000}) #2000
-    #    reconf_client.update_configuration({"translational_damping": 80}) #80
-    #    reconf_client.update_configuration({"rotational_stiffness": 150}) #150
-    #    reconf_client.update_configuration({"rotational_damping": 7}) # 7
-    #    reconf_client.update_configuration({"translational_Ki": 10}) #10
-    #    reconf_client.update_configuration({"rotatifddonal_Ki": 5})
-    #    for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-    #        reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
-    #        reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
-    #    return 'Precision'
-        
-    # ====== 원본 (Ki/nullspace 점프로 인한 떨림 문제, 보관용) ======
-    # @webapp.route("/precision_mode", methods=["POST"])
-    # def precision_mode():
-    #     reconf_client.update_configuration({"translational_stiffness": 2000})
-    #     reconf_client.update_configuration({"translational_damping": 89})
-    #     reconf_client.update_configuration({"rotational_stiffness": 150})
-    #     reconf_client.update_configuration({"rotational_damping": 7})
-    #     reconf_client.update_configuration({"translational_Ki": 30})
-    #     reconf_client.update_configuration({"rotational_Ki": 10})
-    #     reconf_client.update_configuration({"nullspace_stiffness": 50.0})
-    #     for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-    #         reconf_client.update_configuration({"translational_clip_" + direction: 0.1})
-    #         reconf_client.update_configuration({"rotational_clip_"+ direction: 0.1})
-    #     return 'Precision'
-
-    # ====== 수정본: 재현성/떨림 방지 (Ki=0 유지 + nullspace 안전값 + error_i 리셋) ======
+    # ==========================================================================
+    # /precision_mode — Option MAX-A (INIT과 동일)
+    # spring 최대 손목 토크 9.65 N·m + damping ~2 N·m → peak ~11.65 N·m
+    # ==========================================================================
     @webapp.route("/precision_mode", methods=["POST"])
     def precision_mode():
-        # 1. stiffness / damping
-        reconf_client.update_configuration({"translational_stiffness": 2000})
-        reconf_client.update_configuration({"translational_damping": 80})
-        reconf_client.update_configuration({"rotational_stiffness": 150})
-        reconf_client.update_configuration({"rotational_damping": 7})
-        # 2. nullspace: INIT 과 동일하게 작게 유지 (joint_velocity_violation 방지)
-        reconf_client.update_configuration({"nullspace_stiffness": 2.0})
+        # 1. stiffness / damping (MAX-A)
+        reconf_client.update_configuration({"translational_stiffness": 1500})
+        reconf_client.update_configuration({"translational_damping": 77})
+        reconf_client.update_configuration({"rotational_stiffness": 160})
+        reconf_client.update_configuration({"rotational_damping": 8})
+        # 2. nullspace: drift 억제 (노란 LED 빈도 ↓, 흔들림 ↓)
+        reconf_client.update_configuration({"nullspace_stiffness": 5.0})
         reconf_client.update_configuration({"joint1_nullspace_stiffness": 10.0})
-        # 3. clip
+        # 3. clip (MAX-A — 손목 11 N·m soft threshold 안에 cap)
         for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-            reconf_client.update_configuration({"translational_clip_" + direction: 0.04})
-            reconf_client.update_configuration({"rotational_clip_"+ direction: 0.05})
+            reconf_client.update_configuration({"translational_clip_" + direction: 0.018})
+            reconf_client.update_configuration({"rotational_clip_"+ direction: 0.035})
         # 4. Ki 켜기 직전 현재 pos 를 equilibrium 으로 전송 → error_i.setZero() 트리거
         robot_server.move(robot_server.pos.tolist())
         time.sleep(0.2)
@@ -516,38 +484,11 @@ def main(_):
         reconf_client.update_configuration({"translational_Ki": 0})
         reconf_client.update_configuration({"rotational_Ki": 0})
         return 'Precision'
-    
-    # # # Route for decreasing controller gain
-    # @webapp.route("/precision_mode", methods=["POST"])
-    # def precision_mode():
-    #     reconf_client.update_configuration({"translational_stiffness": 100}) #2000
-    #     reconf_client.update_configuration({"translational_damping": 10}) #80
-    #     reconf_client.update_configuration({"rotational_stiffness": 150}) #150
-    #     reconf_client.update_configuration({"rotational_damping": 7}) # 7
-    #     reconf_client.update_configuration({"translational_Ki": 10}) #10
-    #     reconf_client.update_configuration({"rotational_Ki": 5})
-    #     for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-    #         reconf_client.update_configuration({"translational_clip_" + direction: 0.007})
-    #         reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
-    #     return 'Precision'
-                
 
-    # ====== 원본 (Ki/nullspace 점프 문제 동일, 보관용) ======
-    # @webapp.route("/compliance_mode", methods=["POST"])
-    # def compliance_mode():
-    #     reconf_client.update_configuration({"translational_stiffness": 800}) #1300 800 1300->1800 ->
-    #     reconf_client.update_configuration({"translational_damping": 80}) #80
-    #     reconf_client.update_configuration({"rotational_stiffness": 150}) #150
-    #     reconf_client.update_configuration({"rotational_damping": 7}) # 7
-    #     reconf_client.update_configuration({"translational_Ki": 10}) #10
-    #     reconf_client.update_configuration({"rotational_Ki": 0})
-    #     reconf_client.update_configuration({"nullspace_stiffness": 50.0})
-    #     for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-    #         reconf_client.update_configuration({"translational_clip_" + direction: 0.05})
-    #         reconf_client.update_configuration({"rotational_clip_" + direction: 0.07})
-    #     return 'Compliance'
-
-    # ====== 수정본: 재현성/떨림 방지 (Ki=0 + nullspace 안전값 + error_i 리셋) ======
+    # ==========================================================================
+    # /compliance_mode — 현재 eval_robot.py 흐름에서 호출 안 됨 (dead route)
+    # 사용 시점에 검토 필요. 보관용으로만 유지.
+    # ==========================================================================
     @webapp.route("/compliance_mode", methods=["POST"])
     def compliance_mode():
         # 1. stiffness / damping
@@ -555,7 +496,7 @@ def main(_):
         reconf_client.update_configuration({"translational_damping": 80})
         reconf_client.update_configuration({"rotational_stiffness": 150})
         reconf_client.update_configuration({"rotational_damping": 7})
-        # 2. nullspace: INIT 과 동일하게 작게 유지
+        # 2. nullspace
         reconf_client.update_configuration({"nullspace_stiffness": 2.0})
         reconf_client.update_configuration({"joint1_nullspace_stiffness": 10.0})
         # 3. clip
@@ -569,7 +510,7 @@ def main(_):
         reconf_client.update_configuration({"translational_Ki": 0})
         reconf_client.update_configuration({"rotational_Ki": 0})
         return 'Compliance'
-    
+
     webapp.run(host="0.0.0.0")
 
 
