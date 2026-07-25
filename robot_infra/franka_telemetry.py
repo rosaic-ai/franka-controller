@@ -13,6 +13,7 @@ if __package__:
         MAGIC,
         PACKET_BYTES,
         SCHEMA_VERSION,
+        FIELD_ORDER_ID,
         FrankaTelemetryState,
         encode_packet,
     )
@@ -21,6 +22,7 @@ else:
         MAGIC,
         PACKET_BYTES,
         SCHEMA_VERSION,
+        FIELD_ORDER_ID,
         FrankaTelemetryState,
         encode_packet,
     )
@@ -49,6 +51,8 @@ _PAYLOAD_ARRAY_FIELDS = (
     "I_total",
 )
 _PAYLOAD_SCALAR_FIELDS = ("m_ee", "m_load", "m_total")
+_TELEMETRY_WARNING_LOCK = threading.Lock()
+_LAST_TELEMETRY_WARNING_NS = 0
 
 
 @dataclass(frozen=True)
@@ -81,6 +85,33 @@ class SendSnapshot:
     state: FrankaTelemetryState
     source_state_age_us: int
     source_jacobian_age_us: int
+
+
+def safe_telemetry_update(
+    update,
+    msg,
+    monotonic_ns=time.monotonic_ns,
+    logger=logging.warning,
+):
+    """Run a telemetry-only callback without affecting legacy ROS updates."""
+
+    global _LAST_TELEMETRY_WARNING_NS
+    try:
+        update(msg)
+        return True
+    except Exception as exc:
+        now_ns = monotonic_ns()
+        should_log = False
+        with _TELEMETRY_WARNING_LOCK:
+            if (
+                now_ns - _LAST_TELEMETRY_WARNING_NS
+                >= 5_000_000_000
+            ):
+                _LAST_TELEMETRY_WARNING_NS = now_ns
+                should_log = True
+        if should_log:
+            logger("Franka telemetry snapshot update failed: %s", exc)
+        return False
 
 
 def _as_seconds(value):
@@ -258,24 +289,46 @@ def build_status_payload(
     store,
     publisher_stats,
     server_commit,
+    server_started_at,
     entrypoint,
     now_monotonic_ns=None,
 ):
     """Build the stable JSON object returned by ``/telemetry/status``."""
 
     status = store.status_snapshot(now_monotonic_ns=now_monotonic_ns)
+    now_ns = (
+        time.monotonic_ns()
+        if now_monotonic_ns is None
+        else int(now_monotonic_ns)
+    )
+    udp = dict(publisher_stats or {"enabled": False})
+    host = udp.pop("host", "")
+    port = udp.pop("port", None)
+    hz = udp.pop("hz", None)
+    last_send_ns = udp.pop("last_send_monotonic_ns", None)
+    udp["destination"] = (
+        f"{host}:{port}" if host and port is not None else None
+    )
+    udp["target_hz"] = hz
+    udp["last_send_age_ms"] = (
+        max(0, now_ns - last_send_ns) / 1_000_000.0
+        if last_send_ns is not None
+        else None
+    )
     return {
         "ready": status["ready"],
         "schema": {
             "magic": MAGIC.decode("ascii"),
             "version": SCHEMA_VERSION,
             "packet_bytes": PACKET_BYTES,
+            "field_order": FIELD_ORDER_ID,
         },
         "server": {
+            "started_at": server_started_at,
             "commit": server_commit,
             "entrypoint": entrypoint,
         },
-        "udp": dict(publisher_stats or {"enabled": False}),
+        "udp": udp,
         "source": status["source"],
         "robot": status["robot"],
         "frames": status["frames"],
@@ -338,6 +391,7 @@ class FrankaUdpPublisher:
             "encode_errors": 0,
             "send_errors": 0,
             "last_send_monotonic_ns": None,
+            "last_sequence": None,
             "last_error": None,
         }
         self._last_warning_ns = 0
@@ -404,6 +458,7 @@ class FrankaUdpPublisher:
         with self._stats_lock:
             self._stats["sent_packets"] += 1
             self._stats["last_send_monotonic_ns"] = now_ns
+            self._stats["last_sequence"] = self._sequence
             self._stats["last_error"] = None
         self._sequence = (self._sequence + 1) & (2**64 - 1)
         return True

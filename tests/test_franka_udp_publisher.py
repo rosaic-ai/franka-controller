@@ -1,5 +1,7 @@
 import unittest
 
+import tests  # noqa: F401  # installs test-only optional dependency stubs
+
 from robot_infra.franka_telemetry import FrankaUdpPublisher
 from robot_infra.franka_telemetry_protocol import decode_packet
 from tests.test_franka_telemetry_store import ready_store
@@ -60,6 +62,7 @@ class UdpPublisherTest(unittest.TestCase):
         self.assertEqual(decode_packet(packet).sequence, 0)
         self.assertEqual(decode_packet(sock.sent[1][0]).sequence, 1)
         self.assertEqual(publisher.stats_snapshot()["sent_packets"], 2)
+        self.assertEqual(publisher.stats_snapshot()["last_sequence"], 1)
         publisher.stop()
         self.assertTrue(sock.closed)
 

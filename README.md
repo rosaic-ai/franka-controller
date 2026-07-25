@@ -39,9 +39,6 @@ realtime_config: ignore
     | `--robot_ip` | IP of the robot for launching the controller |
     | `--gripper_dist` | Distance the gripper should open to. 0.09 for single-object task, 0.075 for the multi-object task |
     | `--force_base_frame` | Whether to read the end-effector force/torque information in the base frame. |
-    | `--telemetry_host` | ROSAIC PC IPv4 destination. Empty by default, which disables UDP telemetry. |
-    | `--telemetry_port` | ROSAIC UDP telemetry port. Default: 5010. |
-    | `--telemetry_hz` | Franka state telemetry rate from 1 to 200 Hz. Default: 200. |
 
     This starts the ROS impedance controller and the HTTP server. You can test compliance by gently pushing the end effector.
 
@@ -102,6 +99,14 @@ realtime_config: ignore
     and whenever either source is older than five telemetry periods. Leaving
     `--telemetry_host` empty preserves the existing server behavior without
     opening a UDP socket or starting a telemetry thread.
+
+    The telemetry flags above belong to `robot_infra/franka_server.py`:
+
+    | Flag | Description |
+    | --- | --- |
+    | `--telemetry_host` | ROSAIC PC IPv4 destination. Empty disables UDP telemetry. |
+    | `--telemetry_port` | ROSAIC UDP telemetry port. Default: 5010. |
+    | `--telemetry_hz` | Franka state telemetry rate from 1 to 200 Hz. Default: 200. |
 
 2. **Launch Gym Environment**
     Create an instance of the gym environment in a second terminal:

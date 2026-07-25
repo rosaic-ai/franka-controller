@@ -12,6 +12,7 @@ from typing import Tuple
 
 MAGIC = b"FRS1"
 SCHEMA_VERSION = 1
+FIELD_ORDER_ID = "franka_state_v1_127d"
 
 HEADER_STRUCT = struct.Struct("!4sHHHHQqIdQI")
 PAYLOAD_STRUCT = struct.Struct("!127dB")

@@ -1,9 +1,12 @@
 import unittest
 from types import SimpleNamespace
 
+import tests  # noqa: F401  # installs test-only optional dependency stubs
+
 from robot_infra.franka_telemetry import (
     TelemetryStateStore,
     build_status_payload,
+    safe_telemetry_update,
 )
 
 
@@ -133,12 +136,35 @@ class TelemetryStoreTest(unittest.TestCase):
     def test_status_reports_applied_payload_frames_and_active_errors(self):
         status = build_status_payload(
             store=ready_store(),
-            publisher_stats=None,
+            publisher_stats={
+                "enabled": True,
+                "host": "20.42.0.54",
+                "port": 5010,
+                "hz": 200,
+                "sent_packets": 10,
+                "send_errors": 0,
+                "stale_skips": 0,
+                "last_sequence": 9,
+                "last_send_monotonic_ns": 900_000,
+            },
             server_commit="abc123",
+            server_started_at="2026-07-25T12:00:00+09:00",
             entrypoint="robot_infra/franka_server.py",
             now_monotonic_ns=1_000_000,
         )
         self.assertTrue(status["ready"])
+        self.assertEqual(
+            status["schema"]["field_order"],
+            "franka_state_v1_127d",
+        )
+        self.assertEqual(
+            status["server"]["started_at"],
+            "2026-07-25T12:00:00+09:00",
+        )
+        self.assertEqual(status["udp"]["destination"], "20.42.0.54:5010")
+        self.assertEqual(status["udp"]["target_hz"], 200)
+        self.assertEqual(status["udp"]["last_sequence"], 9)
+        self.assertEqual(status["udp"]["last_send_age_ms"], 0.1)
         self.assertEqual(status["payload"]["m_load"], 0.96)
         self.assertEqual(status["frames"]["F_T_EE"], list(F_T_EE))
         self.assertEqual(
@@ -164,6 +190,18 @@ class TelemetryStoreTest(unittest.TestCase):
         self.assertEqual(
             status["source"]["reason"],
             "waiting_for_zero_jacobian",
+        )
+
+    def test_safe_update_contains_telemetry_conversion_errors(self):
+        def broken_update(_msg):
+            raise ValueError("bad telemetry field")
+
+        self.assertFalse(
+            safe_telemetry_update(
+                broken_update,
+                object(),
+                logger=lambda *_args: None,
+            )
         )
 
 

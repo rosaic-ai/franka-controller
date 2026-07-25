@@ -1,6 +1,8 @@
 import dataclasses
 import unittest
 
+import tests  # noqa: F401  # installs test-only optional dependency stubs
+
 from robot_infra.franka_telemetry_protocol import (
     PACKET_BYTES,
     FrankaTelemetryState,

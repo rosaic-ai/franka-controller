@@ -68,7 +68,13 @@ class ServerIntegrationTest(unittest.TestCase):
             first = methods[method_name].body[0]
             self.assertIsInstance(first, ast.Expr)
             self.assertIsInstance(first.value, ast.Call)
-            self.assertEqual(first.value.func.attr, update_name)
+            self.assertEqual(
+                first.value.func.id,
+                "safe_telemetry_update",
+            )
+            callback = first.value.args[0]
+            self.assertIsInstance(callback, ast.Attribute)
+            self.assertEqual(callback.attr, update_name)
 
     def test_main_owns_publisher_lifecycle(self):
         tree = parsed_server()

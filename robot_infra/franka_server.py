@@ -2,6 +2,7 @@
 This file starts a control server running on the real time PC connected to the franka robot.
 In a screen run `python franka_server.py`
 """
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 import numpy as np
 from pathlib import Path
@@ -23,12 +24,14 @@ if __package__:
         FrankaUdpPublisher,
         TelemetryStateStore,
         build_status_payload,
+        safe_telemetry_update,
     )
 else:
     from franka_telemetry import (
         FrankaUdpPublisher,
         TelemetryStateStore,
         build_status_payload,
+        safe_telemetry_update,
     )
 
 FLAGS = flags.FLAGS
@@ -183,7 +186,10 @@ class FrankaServer:
         self.eepub.publish(msg)
 
     def _set_currpos(self, msg):
-        self.telemetry_store.update_franka_state(msg)
+        safe_telemetry_update(
+            self.telemetry_store.update_franka_state,
+            msg,
+        )
         tmatrix = np.array(list(msg.O_T_EE)).reshape(4, 4).T
         r = R.from_matrix(tmatrix[:3, :3])
         pose = np.concatenate([tmatrix[:3, -1], r.as_quat()])
@@ -200,7 +206,10 @@ class FrankaServer:
             rospy.logwarn("Jacobian not set, end-effector velocity temporarily not available")
 
     def _set_jacobian(self, msg):
-        self.telemetry_store.update_jacobian(msg)
+        safe_telemetry_update(
+            self.telemetry_store.update_jacobian,
+            msg,
+        )
         jacobian = np.array(list(msg.zero_jacobian)).reshape((6, 7), order="F")
         self.jacobian = jacobian
         
@@ -267,6 +276,7 @@ def main(_):
         hz=FLAGS.telemetry_hz,
     )
     server_commit = _read_server_commit()
+    server_started_at = datetime.now(timezone.utc).astimezone().isoformat()
     robot_server.start_impedance()
     telemetry_publisher.start()
 
@@ -380,6 +390,7 @@ def main(_):
                 store=robot_server.telemetry_store,
                 publisher_stats=telemetry_publisher.stats_snapshot(),
                 server_commit=server_commit,
+                server_started_at=server_started_at,
                 entrypoint="robot_infra/franka_server.py",
                 now_monotonic_ns=time.monotonic_ns(),
             )
