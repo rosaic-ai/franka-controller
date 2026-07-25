@@ -1,6 +1,10 @@
 """Thread-safe Franka telemetry snapshots and transport helpers."""
 
 from dataclasses import dataclass
+import ipaddress
+import logging
+import socket
+import struct
 import threading
 import time
 
@@ -10,6 +14,7 @@ if __package__:
         PACKET_BYTES,
         SCHEMA_VERSION,
         FrankaTelemetryState,
+        encode_packet,
     )
 else:
     from franka_telemetry_protocol import (
@@ -17,6 +22,7 @@ else:
         PACKET_BYTES,
         SCHEMA_VERSION,
         FrankaTelemetryState,
+        encode_packet,
     )
 
 
@@ -275,3 +281,172 @@ def build_status_payload(
         "frames": status["frames"],
         "payload": status["payload"],
     }
+
+
+class FrankaUdpPublisher:
+    """Best-effort UDP publisher isolated from the robot control path."""
+
+    def __init__(
+        self,
+        store,
+        host,
+        port=5010,
+        hz=200,
+        socket_factory=None,
+        monotonic_ns=time.monotonic_ns,
+    ):
+        if (
+            not isinstance(port, int)
+            or isinstance(port, bool)
+            or not 1 <= port <= 65535
+        ):
+            raise ValueError("telemetry port must be in range 1-65535")
+        if (
+            not isinstance(hz, int)
+            or isinstance(hz, bool)
+            or not 1 <= hz <= 200
+        ):
+            raise ValueError("telemetry hz must be in range 1-200")
+        if host:
+            try:
+                ipaddress.IPv4Address(host)
+            except ipaddress.AddressValueError as exc:
+                raise ValueError(
+                    "telemetry host must be an IPv4 literal"
+                ) from exc
+
+        self.store = store
+        self.host = host
+        self.port = port
+        self.hz = hz
+        self.enabled = bool(host)
+        self._monotonic_ns = monotonic_ns
+        self._max_age_ns = round(5_000_000_000 / hz)
+        self._period_ns = round(1_000_000_000 / hz)
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._sequence = 0
+        self._stats_lock = threading.Lock()
+        self._stats = {
+            "enabled": self.enabled,
+            "host": host,
+            "port": port,
+            "hz": hz,
+            "running": False,
+            "sent_packets": 0,
+            "stale_skips": 0,
+            "encode_errors": 0,
+            "send_errors": 0,
+            "last_send_monotonic_ns": None,
+            "last_error": None,
+        }
+        self._last_warning_ns = 0
+        if self.enabled:
+            factory = socket_factory or (
+                lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            )
+            self._socket = factory()
+        else:
+            self._socket = None
+
+    def _record(self, field, now_ns, error=None):
+        with self._stats_lock:
+            self._stats[field] += 1
+            if error is not None:
+                self._stats["last_error"] = str(error)
+        if (
+            error is not None
+            and now_ns - self._last_warning_ns >= 5_000_000_000
+        ):
+            logging.warning("Franka UDP telemetry error: %s", error)
+            self._last_warning_ns = now_ns
+
+    def send_once(self, now_monotonic_ns=None):
+        if not self.enabled:
+            return False
+        now_ns = (
+            self._monotonic_ns()
+            if now_monotonic_ns is None
+            else int(now_monotonic_ns)
+        )
+        snapshot = self.store.snapshot_for_send(
+            now_monotonic_ns=now_ns,
+            max_age_ns=self._max_age_ns,
+        )
+        if snapshot is None:
+            self._record("stale_skips", now_ns)
+            return False
+
+        try:
+            packet = encode_packet(
+                snapshot.state,
+                sequence=self._sequence,
+                send_monotonic_ns=now_ns,
+                source_state_age_us=snapshot.source_state_age_us,
+            )
+        except (TypeError, ValueError, OverflowError, struct.error) as exc:
+            self._record("encode_errors", now_ns, error=exc)
+            return False
+
+        try:
+            sent_bytes = self._socket.sendto(
+                packet,
+                (self.host, self.port),
+            )
+            if sent_bytes != len(packet):
+                raise OSError(
+                    f"short UDP send: {sent_bytes}/{len(packet)} bytes"
+                )
+        except OSError as exc:
+            self._record("send_errors", now_ns, error=exc)
+            return False
+
+        with self._stats_lock:
+            self._stats["sent_packets"] += 1
+            self._stats["last_send_monotonic_ns"] = now_ns
+            self._stats["last_error"] = None
+        self._sequence = (self._sequence + 1) & (2**64 - 1)
+        return True
+
+    def _run(self):
+        deadline_ns = self._monotonic_ns()
+        while not self._stop_event.is_set():
+            now_ns = self._monotonic_ns()
+            remaining_ns = deadline_ns - now_ns
+            if remaining_ns > 0:
+                self._stop_event.wait(remaining_ns / 1_000_000_000)
+                continue
+            self.send_once(now_monotonic_ns=now_ns)
+            deadline_ns += self._period_ns
+            if now_ns - deadline_ns > self._period_ns:
+                deadline_ns = now_ns + self._period_ns
+
+    def start(self):
+        if not self.enabled or (
+            self._thread is not None and self._thread.is_alive()
+        ):
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="franka-udp-telemetry",
+            daemon=True,
+        )
+        with self._stats_lock:
+            self._stats["running"] = True
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        if self._socket is not None:
+            self._socket.close()
+            self._socket = None
+        with self._stats_lock:
+            self._stats["running"] = False
+
+    def stats_snapshot(self):
+        with self._stats_lock:
+            return dict(self._stats)
