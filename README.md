@@ -39,6 +39,9 @@ realtime_config: ignore
     | `--robot_ip` | IP of the robot for launching the controller |
     | `--gripper_dist` | Distance the gripper should open to. 0.09 for single-object task, 0.075 for the multi-object task |
     | `--force_base_frame` | Whether to read the end-effector force/torque information in the base frame. |
+    | `--telemetry_host` | ROSAIC PC IPv4 destination. Empty by default, which disables UDP telemetry. |
+    | `--telemetry_port` | ROSAIC UDP telemetry port. Default: 5010. |
+    | `--telemetry_hz` | Franka state telemetry rate from 1 to 200 Hz. Default: 200. |
 
     This starts the ROS impedance controller and the HTTP server. You can test compliance by gently pushing the end effector.
 
@@ -65,6 +68,7 @@ realtime_config: ignore
     | `clearerr` | Clear errors |
     | `precision_mode` | Set impedance parameters to precision mode for resets |
     | `compliance_mode` | Set impedance parameters to compliance mode for execution |
+    | `telemetry/status` | GET-only diagnostic status for UDP, source freshness, runtime payload, frames, and robot errors |
 
     #### Quick Terminal Commands
     ```bash
@@ -76,6 +80,28 @@ realtime_config: ignore
     curl -X POST http://127.0.0.1:5000/stopimp          # Stop impedance controller
     curl -X POST http://127.0.0.1:5000/startimp         # Start impedance controller
     ```
+
+    #### Franka State Telemetry
+
+    The ROS/Flask hardware server can publish the current `FrankaState` and
+    zero Jacobian as a fixed 1,069-byte binary UDP packet. The UDP stream on
+    port 5010 is observation-only. It does not replace the trajectory gateway
+    on TCP port 4999, which continues to relay motion commands.
+
+    ```bash
+    python robot_infra/franka_server.py \
+      --robot_ip 172.16.0.2 \
+      --telemetry_host 20.42.0.54 \
+      --telemetry_port 5010 \
+      --telemetry_hz 200
+
+    curl -s http://127.0.0.1:5000/telemetry/status
+    ```
+
+    Packets are suppressed until both state and Jacobian callbacks are ready,
+    and whenever either source is older than five telemetry periods. Leaving
+    `--telemetry_host` empty preserves the existing server behavior without
+    opening a UDP socket or starting a telemetry thread.
 
 2. **Launch Gym Environment**
     Create an instance of the gym environment in a second terminal:

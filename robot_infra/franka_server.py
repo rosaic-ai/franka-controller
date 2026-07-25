@@ -4,6 +4,7 @@ In a screen run `python franka_server.py`
 """
 from flask import Flask, request, jsonify
 import numpy as np
+from pathlib import Path
 import rospy
 import time
 import subprocess
@@ -17,6 +18,19 @@ from sensor_msgs.msg import JointState
 import geometry_msgs.msg as geom_msg
 from dynamic_reconfigure.client import Client as ReconfClient
 
+if __package__:
+    from .franka_telemetry import (
+        FrankaUdpPublisher,
+        TelemetryStateStore,
+        build_status_payload,
+    )
+else:
+    from franka_telemetry import (
+        FrankaUdpPublisher,
+        TelemetryStateStore,
+        build_status_payload,
+    )
+
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "robot_ip", "173.16.0.2", "IP address of the franka robot's controller box"
@@ -25,6 +39,21 @@ flags.DEFINE_float("gripper_dist", 0.09,
                    "Gripper open distance: 0.09 for single-object task, 0.075 for multi-object task")
 
 flags.DEFINE_bool("force_base_frame", False, "Use base frame for force/torque")
+flags.DEFINE_string(
+    "telemetry_host",
+    "",
+    "ROSAIC UDP telemetry destination; empty disables",
+)
+flags.DEFINE_integer(
+    "telemetry_port",
+    5010,
+    "ROSAIC UDP telemetry port",
+)
+flags.DEFINE_integer(
+    "telemetry_hz",
+    200,
+    "Franka UDP telemetry rate, 1-200 Hz",
+)
 
 JOINT_RESET_TARGET = [-0.07, -0.1, 0.0, -2.5, -0.1, 2.5, -0.6]
 
@@ -33,6 +62,7 @@ class FrankaServer:
     (as well as backup) joint recovery policy."""
 
     def __init__(self):
+        self.telemetry_store = TelemetryStateStore()
         self.grippermovepub = rospy.Publisher(
             "/franka_gripper/move/goal", MoveActionGoal, queue_size=1
         )
@@ -153,6 +183,7 @@ class FrankaServer:
         self.eepub.publish(msg)
 
     def _set_currpos(self, msg):
+        self.telemetry_store.update_franka_state(msg)
         tmatrix = np.array(list(msg.O_T_EE)).reshape(4, 4).T
         r = R.from_matrix(tmatrix[:3, :3])
         pose = np.concatenate([tmatrix[:3, -1], r.as_quat()])
@@ -169,6 +200,7 @@ class FrankaServer:
             rospy.logwarn("Jacobian not set, end-effector velocity temporarily not available")
 
     def _set_jacobian(self, msg):
+        self.telemetry_store.update_jacobian(msg)
         jacobian = np.array(list(msg.zero_jacobian)).reshape((6, 7), order="F")
         self.jacobian = jacobian
         
@@ -199,6 +231,21 @@ class FrankaServer:
 ###############################################################################
 
 
+def _read_server_commit():
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        return result.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
 def main(_):
     webapp = Flask(__name__)
 
@@ -213,7 +260,15 @@ def main(_):
 
     """Starts impedance controller"""
     robot_server = FrankaServer()
+    telemetry_publisher = FrankaUdpPublisher(
+        store=robot_server.telemetry_store,
+        host=FLAGS.telemetry_host,
+        port=FLAGS.telemetry_port,
+        hz=FLAGS.telemetry_hz,
+    )
+    server_commit = _read_server_commit()
     robot_server.start_impedance()
+    telemetry_publisher.start()
 
     reconf_client = ReconfClient(
         "cartesian_impedance_controllerdynamic_reconfigure_compliance_param_node"
@@ -318,6 +373,18 @@ def main(_):
             }
         )
 
+    @webapp.route("/telemetry/status", methods=["GET"])
+    def telemetry_status():
+        return jsonify(
+            build_status_payload(
+                store=robot_server.telemetry_store,
+                publisher_stats=telemetry_publisher.stats_snapshot(),
+                server_commit=server_commit,
+                entrypoint="robot_infra/franka_server.py",
+                now_monotonic_ns=time.monotonic_ns(),
+            )
+        )
+
     ## Route for increasing controller gain
     @webapp.route("/precision_mode", methods=["POST"])
     def precision_mode():
@@ -347,7 +414,10 @@ def main(_):
             reconf_client.update_configuration({"rotational_clip_" + direction: 0.04})
         return 'Compliance'
     
-    webapp.run(host="0.0.0.0")
+    try:
+        webapp.run(host="0.0.0.0")
+    finally:
+        telemetry_publisher.stop()
 
 
 if __name__ == "__main__":
