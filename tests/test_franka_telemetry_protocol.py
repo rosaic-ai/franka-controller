@@ -1,4 +1,9 @@
+import ast
 import dataclasses
+import inspect
+import struct
+import subprocess
+import sys
 import unittest
 
 import tests  # noqa: F401  # installs test-only optional dependency stubs
@@ -41,6 +46,7 @@ class ProtocolTest(unittest.TestCase):
             sequence=9,
             send_monotonic_ns=88,
             source_state_age_us=700,
+            zero_jacobian_valid=True,
         )
         self.assertEqual(len(packet), 1069)
         self.assertEqual(PACKET_BYTES, 1069)
@@ -58,6 +64,7 @@ class ProtocolTest(unittest.TestCase):
                 sequence=0,
                 send_monotonic_ns=0,
                 source_state_age_us=0,
+                zero_jacobian_valid=True,
             )
         with self.assertRaisesRegex(ValueError, "finite"):
             encode_packet(
@@ -65,6 +72,7 @@ class ProtocolTest(unittest.TestCase):
                 sequence=0,
                 send_monotonic_ns=0,
                 source_state_age_us=0,
+                zero_jacobian_valid=True,
             )
 
     def test_rejects_invalid_header_and_size(self):
@@ -74,13 +82,22 @@ class ProtocolTest(unittest.TestCase):
                 sequence=0,
                 send_monotonic_ns=0,
                 source_state_age_us=0,
+                zero_jacobian_valid=True,
             )
         )
         packet[0:4] = b"BAD!"
         with self.assertRaisesRegex(ValueError, "magic"):
             decode_packet(bytes(packet))
+
+        truncated = encode_packet(
+            make_state(),
+            sequence=0,
+            send_monotonic_ns=0,
+            source_state_age_us=0,
+            zero_jacobian_valid=True,
+        )[:-1]
         with self.assertRaisesRegex(ValueError, "1069"):
-            decode_packet(bytes(packet[:-1]))
+            decode_packet(truncated)
 
         packet = bytearray(
             encode_packet(
@@ -88,9 +105,10 @@ class ProtocolTest(unittest.TestCase):
                 sequence=0,
                 send_monotonic_ns=0,
                 source_state_age_us=0,
+                zero_jacobian_valid=True,
             )
         )
-        packet[4:6] = b"\x00\x02"
+        packet[4:6] = b"\x00\x00"
         with self.assertRaisesRegex(ValueError, "version"):
             decode_packet(bytes(packet))
 
@@ -102,6 +120,7 @@ class ProtocolTest(unittest.TestCase):
                 sequence=0,
                 send_monotonic_ns=0,
                 source_state_age_us=0,
+                zero_jacobian_valid=True,
             )
         with self.assertRaisesRegex(ValueError, "ros_stamp_nsec"):
             encode_packet(
@@ -109,7 +128,75 @@ class ProtocolTest(unittest.TestCase):
                 sequence=0,
                 send_monotonic_ns=0,
                 source_state_age_us=0,
+                zero_jacobian_valid=True,
             )
+
+
+class SchemaV2Test(unittest.TestCase):
+    def _encode(self, valid):
+        return encode_packet(
+            make_state(),
+            sequence=1,
+            send_monotonic_ns=2,
+            source_state_age_us=3,
+            zero_jacobian_valid=valid,
+        )
+
+    def test_v2_round_trip_carries_jacobian_validity(self):
+        for valid in (True, False):
+            decoded = decode_packet(self._encode(valid))
+            self.assertEqual(decoded.schema_version, 2)
+            self.assertIs(decoded.zero_jacobian_valid, valid)
+
+    def test_decode_accepts_v1_packet_with_unknown_validity(self):
+        # v1 = 현행 배포본 하위호환 — flags 는 reserved(0), validity 미지(None)
+        packet = bytearray(self._encode(True))
+        struct.pack_into("!H", packet, 4, 1)
+        struct.pack_into("!H", packet, 10, 0)
+        decoded = decode_packet(bytes(packet))
+        self.assertEqual(decoded.schema_version, 1)
+        self.assertIsNone(decoded.zero_jacobian_valid)
+
+    def test_future_version_decodes_known_prefix_and_ignores_tail(self):
+        base = bytearray(self._encode(True))
+        extra = 16
+        struct.pack_into("!H", base, 4, 7)
+        struct.pack_into("!H", base, 8, 1069 + extra)
+        packet = bytes(base) + b"\xee" * extra
+        decoded = decode_packet(packet)
+        self.assertEqual(decoded.schema_version, 7)
+        self.assertEqual(decoded.state, make_state())
+        self.assertIs(decoded.zero_jacobian_valid, True)
+
+    def test_future_version_rejects_declared_size_mismatch(self):
+        base = bytearray(self._encode(True))
+        struct.pack_into("!H", base, 4, 7)
+        struct.pack_into("!H", base, 8, 1069 + 1)
+        with self.assertRaises(ValueError):
+            decode_packet(bytes(base))
+
+
+class LayoutGuardTest(unittest.TestCase):
+    def test_layout_guard_survives_python_optimize_mode(self):
+        import robot_infra.franka_telemetry_protocol as protocol
+
+        protocol.verify_layout()
+        module_ast = ast.parse(inspect.getsource(protocol))
+        self.assertEqual(
+            [n for n in module_ast.body if isinstance(n, ast.Assert)], []
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-O",
+                "-c",
+                "import robot_infra.franka_telemetry_protocol as p; p.verify_layout()",
+            ],
+            capture_output=True,
+            text=True,
+            cwd="/home/rosaic/franka_ManipForce-ROSAIC_ws/franka-controller",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

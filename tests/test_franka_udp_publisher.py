@@ -4,7 +4,8 @@ import tests  # noqa: F401  # installs test-only optional dependency stubs
 
 from robot_infra.franka_telemetry import FrankaUdpPublisher
 from robot_infra.franka_telemetry_protocol import decode_packet
-from tests.test_franka_telemetry_store import ready_store
+from robot_infra.franka_telemetry import TelemetryStateStore
+from tests.test_franka_telemetry_store import make_franka_msg, ready_store
 
 
 class FakeSocket:
@@ -86,6 +87,42 @@ class UdpPublisherTest(unittest.TestCase):
             broken.send_once(now_monotonic_ns=1_000_000)
         )
         self.assertEqual(broken.stats_snapshot()["send_errors"], 1)
+
+    def test_jacobian_validity_flag_reaches_wire_and_counts(self):
+        sock = FakeSocket()
+        publisher = FrankaUdpPublisher(
+            store=ready_store(),
+            host="20.42.0.54",
+            socket_factory=lambda: sock,
+        )
+        self.assertTrue(publisher.send_once(now_monotonic_ns=1_000_000))
+        self.assertIs(
+            decode_packet(sock.sent[0][0]).zero_jacobian_valid, True
+        )
+        self.assertEqual(
+            publisher.stats_snapshot()["jacobian_invalid_sends"], 0
+        )
+
+        state_only_sock = FakeSocket()
+        state_only = TelemetryStateStore(monotonic_ns=lambda: 1_000_000)
+        state_only.update_franka_state(
+            make_franka_msg(), received_monotonic_ns=900_000
+        )
+        state_only_publisher = FrankaUdpPublisher(
+            store=state_only,
+            host="20.42.0.54",
+            socket_factory=lambda: state_only_sock,
+        )
+        self.assertTrue(
+            state_only_publisher.send_once(now_monotonic_ns=1_000_000)
+        )
+        decoded = decode_packet(state_only_sock.sent[0][0])
+        self.assertIs(decoded.zero_jacobian_valid, False)
+        self.assertEqual(decoded.state.zero_jacobian, (0.0,) * 42)
+        self.assertEqual(
+            state_only_publisher.stats_snapshot()["jacobian_invalid_sends"],
+            1,
+        )
 
     def test_rejects_invalid_configuration_before_opening_socket(self):
         with self.assertRaisesRegex(ValueError, "IPv4"):
