@@ -1,7 +1,12 @@
-"""Fixed-size Franka state telemetry protocol.
+"""Fixed-size Franka state telemetry protocol (schema v1/v2 + 미래 버전 관용).
 
-Schema v1 uses network byte order and remains below the project's 1,200-byte
-UDP payload budget.
+버전 정책 (2026-07-28):
+- v1: reserved16 은 항상 0. jacobian 유효성 표현 불가(디코드 시 None).
+- v2: 동일 레이아웃, reserved16 자리가 flags16 (bit0 = zero_jacobian_valid).
+- 미래 버전(v>2): 선언 header/packet 길이를 신뢰해 알려진 prefix 만 파싱.
+- 진화 계약: 기존 필드 오프셋 불변, 확장은 헤더/페이로드 꼬리에만 붙인다.
+
+Network byte order, 1,200-byte UDP payload budget 유지.
 """
 
 from dataclasses import dataclass
@@ -11,8 +16,11 @@ from typing import Tuple
 
 
 MAGIC = b"FRS1"
-SCHEMA_VERSION = 1
-FIELD_ORDER_ID = "franka_state_v1_127d"
+SCHEMA_VERSION = 2
+KNOWN_VERSIONS = (1, 2)
+FLAG_ZERO_JACOBIAN_VALID = 0x0001
+FIELD_ORDER_ID = "franka_state_v2_127d_flags"
+MAX_TOLERATED_PACKET_BYTES = 4096
 
 HEADER_STRUCT = struct.Struct("!4sHHHHQqIdQI")
 PAYLOAD_STRUCT = struct.Struct("!127dB")
@@ -34,10 +42,25 @@ FIELD_LENGTHS = (
     ("O_F_ext_hat_K", 6),
 )
 
-assert HEADER_BYTES == 52
-assert PAYLOAD_STRUCT.size == 1017
-assert PACKET_BYTES == 1069
-assert PACKET_BYTES <= 1200
+
+def verify_layout():
+    """Wire 레이아웃 불변식 명시 검사 — ``python -O`` 에서도 동작해야 한다."""
+    checks = (
+        ("HEADER_BYTES", HEADER_BYTES, 52),
+        ("payload bytes", PAYLOAD_STRUCT.size, 1017),
+        ("PACKET_BYTES", PACKET_BYTES, 1069),
+    )
+    for name, actual, expected in checks:
+        if actual != expected:
+            raise RuntimeError(
+                f"telemetry wire layout drifted: {name}={actual}, "
+                f"expected {expected}"
+            )
+    if PACKET_BYTES > 1200:
+        raise RuntimeError("PACKET_BYTES exceeds the 1,200-byte UDP budget")
+
+
+verify_layout()
 
 
 @dataclass(frozen=True)
@@ -67,6 +90,8 @@ class DecodedFrankaPacket:
     sequence: int
     send_monotonic_ns: int
     source_state_age_us: int
+    schema_version: int
+    zero_jacobian_valid: "bool | None"
 
 
 def _validate_uint(name, value, maximum):
@@ -110,9 +135,17 @@ def encode_packet(
     sequence,
     send_monotonic_ns,
     source_state_age_us,
+    *,
+    zero_jacobian_valid,
 ):
-    """Encode one immutable state snapshot as a schema-v1 datagram."""
+    """Encode one immutable state snapshot as a schema-v2 datagram.
 
+    ``zero_jacobian_valid`` 는 필수다 — 호출부가 jacobian 신선도를 판단해
+    명시해야 하며, 무효면 수신측이 zero_jacobian 열을 신뢰하지 않는다.
+    """
+
+    if not isinstance(zero_jacobian_valid, bool):
+        raise ValueError("zero_jacobian_valid must be a bool")
     _validate_state(state)
     _validate_uint("sequence", sequence, 2**64 - 1)
     _validate_uint("send_monotonic_ns", send_monotonic_ns, 2**64 - 1)
@@ -123,7 +156,7 @@ def encode_packet(
         SCHEMA_VERSION,
         HEADER_BYTES,
         PACKET_BYTES,
-        0,
+        FLAG_ZERO_JACOBIAN_VALID if zero_jacobian_valid else 0,
         sequence,
         state.ros_stamp_sec,
         state.ros_stamp_nsec,
@@ -143,11 +176,12 @@ def encode_packet(
 
 
 def decode_packet(packet):
-    """Decode and validate one schema-v1 datagram."""
+    """Decode and validate one telemetry datagram (v1/v2 엄격, 미래 버전 관용)."""
 
-    if len(packet) != PACKET_BYTES:
+    if len(packet) < HEADER_BYTES:
         raise ValueError(
-            f"packet must contain exactly {PACKET_BYTES} bytes, got {len(packet)}"
+            f"packet must contain at least {HEADER_BYTES} header bytes, "
+            f"got {len(packet)}"
         )
 
     (
@@ -155,7 +189,7 @@ def decode_packet(packet):
         version,
         header_bytes,
         packet_bytes,
-        _reserved,
+        flags,
         sequence,
         ros_stamp_sec,
         ros_stamp_nsec,
@@ -166,14 +200,44 @@ def decode_packet(packet):
 
     if magic != MAGIC:
         raise ValueError(f"invalid magic {magic!r}")
-    if version != SCHEMA_VERSION:
+    if version in KNOWN_VERSIONS:
+        if len(packet) != PACKET_BYTES:
+            raise ValueError(
+                f"schema v{version} packet must contain exactly "
+                f"{PACKET_BYTES} bytes, got {len(packet)}"
+            )
+        if header_bytes != HEADER_BYTES:
+            raise ValueError(f"invalid header size {header_bytes}")
+        if packet_bytes != PACKET_BYTES:
+            raise ValueError(f"invalid declared packet size {packet_bytes}")
+        payload_offset = HEADER_BYTES
+    elif version > SCHEMA_VERSION:
+        # 미래 버전 관용 경로 — 선언 길이를 신뢰하고 알려진 prefix 만 읽는다.
+        if len(packet) > MAX_TOLERATED_PACKET_BYTES:
+            raise ValueError(
+                f"packet of {len(packet)} bytes exceeds tolerated maximum "
+                f"{MAX_TOLERATED_PACKET_BYTES}"
+            )
+        if packet_bytes != len(packet):
+            raise ValueError(
+                f"declared packet size {packet_bytes} does not match "
+                f"datagram of {len(packet)} bytes"
+            )
+        if header_bytes < HEADER_BYTES:
+            raise ValueError(
+                f"declared header size {header_bytes} is smaller than the "
+                f"known prefix {HEADER_BYTES}"
+            )
+        if header_bytes + PAYLOAD_STRUCT.size > len(packet):
+            raise ValueError(
+                "packet too small for the known payload prefix after its "
+                f"declared {header_bytes}-byte header"
+            )
+        payload_offset = header_bytes
+    else:
         raise ValueError(f"unsupported schema version {version}")
-    if header_bytes != HEADER_BYTES:
-        raise ValueError(f"invalid header size {header_bytes}")
-    if packet_bytes != PACKET_BYTES:
-        raise ValueError(f"invalid declared packet size {packet_bytes}")
 
-    unpacked = PAYLOAD_STRUCT.unpack_from(packet, HEADER_BYTES)
+    unpacked = PAYLOAD_STRUCT.unpack_from(packet, payload_offset)
     double_values = unpacked[:-1]
     robot_mode = unpacked[-1]
     if not all(math.isfinite(value) for value in double_values):
@@ -199,4 +263,8 @@ def decode_packet(packet):
         sequence=sequence,
         send_monotonic_ns=send_monotonic_ns,
         source_state_age_us=source_state_age_us,
+        schema_version=version,
+        zero_jacobian_valid=(
+            None if version == 1 else bool(flags & FLAG_ZERO_JACOBIAN_VALID)
+        ),
     )

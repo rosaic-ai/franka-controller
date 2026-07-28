@@ -85,6 +85,7 @@ class SendSnapshot:
     state: FrankaTelemetryState
     source_state_age_us: int
     source_jacobian_age_us: int
+    zero_jacobian_valid: bool
 
 
 def safe_telemetry_update(
@@ -201,24 +202,39 @@ class TelemetryStateStore:
 
     def snapshot_for_send(self, now_monotonic_ns, max_age_ns):
         franka, jacobian = self._samples()
-        if franka is None or jacobian is None:
+        if franka is None:
             return None
 
         state_age_ns = max(
             0, int(now_monotonic_ns) - franka.received_monotonic_ns
         )
-        jacobian_age_ns = max(
-            0, int(now_monotonic_ns) - jacobian.received_monotonic_ns
-        )
-        if state_age_ns > max_age_ns or jacobian_age_ns > max_age_ns:
+        if state_age_ns > max_age_ns:
             return None
+
+        # jacobian 은 옵셔널 (v2) — 컨트롤러 전환/position 모드에서 publisher 가
+        # 멈춰도 state 텔레메트리는 흐르고, 무효 플래그로 명시한다.
+        if jacobian is None:
+            jacobian_values = (0.0,) * 42
+            jacobian_valid = False
+            source_jacobian_age_us = 2**32 - 1  # 부재 표식 (로컬 status 전용)
+        else:
+            jacobian_age_ns = max(
+                0, int(now_monotonic_ns) - jacobian.received_monotonic_ns
+            )
+            source_jacobian_age_us = jacobian_age_ns // 1_000
+            if jacobian_age_ns > max_age_ns:
+                jacobian_values = (0.0,) * 42
+                jacobian_valid = False
+            else:
+                jacobian_values = jacobian.zero_jacobian
+                jacobian_valid = True
 
         arrays = dict(franka.arrays)
         state = FrankaTelemetryState(
             ros_stamp_sec=franka.ros_stamp_sec,
             ros_stamp_nsec=franka.ros_stamp_nsec,
             franka_time_sec=franka.franka_time_sec,
-            zero_jacobian=jacobian.zero_jacobian,
+            zero_jacobian=jacobian_values,
             control_command_success_rate=(
                 franka.control_command_success_rate
             ),
@@ -228,7 +244,8 @@ class TelemetryStateStore:
         return SendSnapshot(
             state=state,
             source_state_age_us=state_age_ns // 1_000,
-            source_jacobian_age_us=jacobian_age_ns // 1_000,
+            source_jacobian_age_us=source_jacobian_age_us,
+            zero_jacobian_valid=jacobian_valid,
         )
 
     def status_snapshot(self, now_monotonic_ns=None):
@@ -388,6 +405,7 @@ class FrankaUdpPublisher:
             "running": False,
             "sent_packets": 0,
             "stale_skips": 0,
+            "jacobian_invalid_sends": 0,
             "encode_errors": 0,
             "send_errors": 0,
             "last_send_monotonic_ns": None,
@@ -437,6 +455,7 @@ class FrankaUdpPublisher:
                 sequence=self._sequence,
                 send_monotonic_ns=now_ns,
                 source_state_age_us=snapshot.source_state_age_us,
+                zero_jacobian_valid=snapshot.zero_jacobian_valid,
             )
         except (TypeError, ValueError, OverflowError, struct.error) as exc:
             self._record("encode_errors", now_ns, error=exc)
@@ -457,6 +476,8 @@ class FrankaUdpPublisher:
 
         with self._stats_lock:
             self._stats["sent_packets"] += 1
+            if not snapshot.zero_jacobian_valid:
+                self._stats["jacobian_invalid_sends"] += 1
             self._stats["last_send_monotonic_ns"] = now_ns
             self._stats["last_sequence"] = self._sequence
             self._stats["last_error"] = None

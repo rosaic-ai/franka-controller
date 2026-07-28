@@ -90,18 +90,28 @@ def ready_store(state_ns=900_000, jacobian_ns=950_000):
 
 
 class TelemetryStoreTest(unittest.TestCase):
-    def test_store_waits_for_both_state_and_jacobian(self):
+    def test_state_only_snapshot_sends_with_invalid_jacobian(self):
+        # 컨트롤러 전환/position 모드에서 jacobian publisher 가 멈춰도
+        # state 텔레메트리는 계속 흘러야 한다 — 무효 플래그로 명시 (v2).
         store = TelemetryStateStore(monotonic_ns=lambda: 1_000_000)
-        store.update_franka_state(
-            make_franka_msg(),
-            received_monotonic_ns=900_000,
-        )
         self.assertIsNone(
             store.snapshot_for_send(
                 now_monotonic_ns=1_000_000,
                 max_age_ns=25_000_000,
             )
         )
+        store.update_franka_state(
+            make_franka_msg(),
+            received_monotonic_ns=900_000,
+        )
+        snapshot = store.snapshot_for_send(
+            now_monotonic_ns=1_000_000,
+            max_age_ns=25_000_000,
+        )
+        self.assertIsNotNone(snapshot)
+        self.assertFalse(snapshot.zero_jacobian_valid)
+        self.assertEqual(snapshot.state.zero_jacobian, (0.0,) * 42)
+        self.assertEqual(snapshot.source_jacobian_age_us, 2**32 - 1)
         store.update_jacobian(
             make_jacobian_msg(),
             received_monotonic_ns=950_000,
@@ -110,6 +120,7 @@ class TelemetryStoreTest(unittest.TestCase):
             now_monotonic_ns=1_000_000,
             max_age_ns=25_000_000,
         )
+        self.assertTrue(snapshot.zero_jacobian_valid)
         self.assertEqual(
             snapshot.state.zero_jacobian,
             make_jacobian_msg().zero_jacobian,
@@ -117,7 +128,7 @@ class TelemetryStoreTest(unittest.TestCase):
         self.assertEqual(snapshot.source_state_age_us, 100)
         self.assertEqual(snapshot.source_jacobian_age_us, 50)
 
-    def test_store_suppresses_stale_state_or_jacobian(self):
+    def test_stale_state_suppresses_but_stale_jacobian_sends_invalid(self):
         stale_state = ready_store(state_ns=0, jacobian_ns=1_000_000)
         self.assertIsNone(
             stale_state.snapshot_for_send(
@@ -126,12 +137,15 @@ class TelemetryStoreTest(unittest.TestCase):
             )
         )
         stale_jacobian = ready_store(state_ns=1_000_000, jacobian_ns=0)
-        self.assertIsNone(
-            stale_jacobian.snapshot_for_send(
-                now_monotonic_ns=25_000_001,
-                max_age_ns=25_000_000,
-            )
+        snapshot = stale_jacobian.snapshot_for_send(
+            now_monotonic_ns=25_000_001,
+            max_age_ns=25_000_000,
         )
+        self.assertIsNotNone(snapshot)
+        self.assertFalse(snapshot.zero_jacobian_valid)
+        self.assertEqual(snapshot.state.zero_jacobian, (0.0,) * 42)
+        # 존재하되 신선하지 않은 jacobian 은 실제 나이를 보고한다
+        self.assertEqual(snapshot.source_jacobian_age_us, 25_000)
 
     def test_status_reports_applied_payload_frames_and_active_errors(self):
         status = build_status_payload(
@@ -155,7 +169,7 @@ class TelemetryStoreTest(unittest.TestCase):
         self.assertTrue(status["ready"])
         self.assertEqual(
             status["schema"]["field_order"],
-            "franka_state_v1_127d",
+            "franka_state_v2_127d_flags",
         )
         self.assertEqual(
             status["server"]["started_at"],
