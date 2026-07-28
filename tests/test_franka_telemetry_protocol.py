@@ -185,16 +185,21 @@ class LayoutGuardTest(unittest.TestCase):
         self.assertEqual(
             [n for n in module_ast.body if isinstance(n, ast.Assert)], []
         )
+        # 패키지 __init__(gym 의존)을 우회해 모듈 파일을 직접 로드한다 —
+        # gym 없는 파이썬(Control PC 기본 env)에서도 -O 내성만 검증되도록.
+        module_file = inspect.getsourcefile(protocol)
+        loader_code = (
+            "import importlib.util, sys; "
+            f"spec = importlib.util.spec_from_file_location('ftp', {module_file!r}); "
+            "m = importlib.util.module_from_spec(spec); "
+            "sys.modules['ftp'] = m; "
+            "spec.loader.exec_module(m); "
+            "m.verify_layout()"
+        )
         result = subprocess.run(
-            [
-                sys.executable,
-                "-O",
-                "-c",
-                "import robot_infra.franka_telemetry_protocol as p; p.verify_layout()",
-            ],
+            [sys.executable, "-O", "-c", loader_code],
             capture_output=True,
             text=True,
-            cwd="/home/rosaic/franka_ManipForce-ROSAIC_ws/franka-controller",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
