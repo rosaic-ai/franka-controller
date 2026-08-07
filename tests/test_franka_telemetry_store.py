@@ -5,6 +5,7 @@ import tests  # noqa: F401  # installs test-only optional dependency stubs
 
 from robot_infra.franka_telemetry import (
     TelemetryStateStore,
+    build_health_payload,
     build_status_payload,
     safe_telemetry_update,
 )
@@ -90,6 +91,31 @@ def ready_store(state_ns=900_000, jacobian_ns=950_000):
 
 
 class TelemetryStoreTest(unittest.TestCase):
+    def test_health_fails_closed_for_stale_state_and_reports_faults(self):
+        store = ready_store(state_ns=900_000, jacobian_ns=950_000)
+        healthy = build_health_payload(
+            store=store,
+            controller_active=True,
+            observed_at="2026-08-07T08:00:00+00:00",
+            now_monotonic_ns=1_000_000,
+        )
+        self.assertTrue(healthy["stateFresh"])
+        self.assertTrue(healthy["controllerActive"])
+        self.assertEqual(healthy["robotMode"], 2)
+        self.assertEqual(healthy["fault"], {
+            "active": True,
+            "codes": ["joint_reflex"],
+        })
+
+        stale = build_health_payload(
+            store=store,
+            controller_active=False,
+            observed_at="2026-08-07T08:00:03+00:00",
+            now_monotonic_ns=2_001_000_000,
+        )
+        self.assertFalse(stale["stateFresh"])
+        self.assertFalse(stale["controllerActive"])
+
     def test_state_only_snapshot_sends_with_invalid_jacobian(self):
         # 컨트롤러 전환/position 모드에서 jacobian publisher 가 멈춰도
         # state 텔레메트리는 계속 흘러야 한다 — 무효 플래그로 명시 (v2).

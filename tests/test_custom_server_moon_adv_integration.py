@@ -70,6 +70,7 @@ class MoonAdvIntegrationTest(unittest.TestCase):
             routes,
             {
                 **{route: ["POST"] for route in expected_post_routes},
+                "/health": ["POST"],
                 "/telemetry/status": ["GET"],
             },
         )
