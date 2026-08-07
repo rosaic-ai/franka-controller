@@ -353,6 +353,30 @@ def build_status_payload(
     }
 
 
+def build_health_payload(
+    store,
+    controller_active,
+    observed_at,
+    now_monotonic_ns=None,
+):
+    """Build the read-only readiness contract consumed by Preflight."""
+
+    status = store.status_snapshot(now_monotonic_ns=now_monotonic_ns)
+    state_age_us = status["source"].get("franka_state_age_us")
+    errors = status["robot"].get("current_errors", [])
+    return {
+        "contractVersion": "franka-gateway-health.v0.1",
+        "observedAt": observed_at,
+        "stateFresh": state_age_us is not None and state_age_us < 2_000_000,
+        "controllerActive": bool(controller_active),
+        "robotMode": status["robot"].get("robot_mode"),
+        "fault": {
+            "active": bool(errors),
+            "codes": errors,
+        },
+    }
+
+
 class FrankaUdpPublisher:
     """Best-effort UDP publisher isolated from the robot control path."""
 

@@ -54,6 +54,7 @@ if __package__:
     from .franka_telemetry import (
         FrankaUdpPublisher,
         TelemetryStateStore,
+        build_health_payload,
         build_status_payload,
         safe_telemetry_update,
     )
@@ -61,6 +62,7 @@ else:
     from franka_telemetry import (
         FrankaUdpPublisher,
         TelemetryStateStore,
+        build_health_payload,
         build_status_payload,
         safe_telemetry_update,
     )
@@ -791,6 +793,20 @@ def main(_):
                 server_commit=server_commit,
                 server_started_at=server_started_at,
                 entrypoint="robot_infra/custom_server_moon_adv.py",
+                now_monotonic_ns=time.monotonic_ns(),
+            )
+        )
+
+    @webapp.route("/health", methods=["POST"])
+    def health():
+        impedance = getattr(robot_server, "imp", None)
+        return jsonify(
+            build_health_payload(
+                store=robot_server.telemetry_store,
+                controller_active=(
+                    impedance is not None and impedance.poll() is None
+                ),
+                observed_at=datetime.now(timezone.utc).isoformat(),
                 now_monotonic_ns=time.monotonic_ns(),
             )
         )
