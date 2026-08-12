@@ -1,0 +1,16 @@
+[Unit]
+Description=ROSAIC Franka Gateway (no-motion startup)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/rosaic/franka-gateway
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -lc 'source /opt/ros/noetic/setup.bash && source %h/franka_ManipForce-ROSAIC_ws/devel/setup.bash && exec %h/miniconda3/envs/manip_franka_controller/bin/python robot_infra/custom_server_moon_adv.py --safe_start=true --telemetry_host=100.95.142.37'
+Restart=always
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
