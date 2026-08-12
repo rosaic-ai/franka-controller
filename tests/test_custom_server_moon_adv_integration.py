@@ -41,6 +41,11 @@ def route_map(tree):
 
 
 class MoonAdvIntegrationTest(unittest.TestCase):
+    def test_systemd_service_uses_safe_start_and_restarts(self):
+        unit = (Path(__file__).parents[1] / "systemd" / "franka-gateway.service").read_text()
+        self.assertIn("--safe_start=true", unit)
+        self.assertIn("Restart=always", unit)
+
     def test_keeps_operational_routes_and_adds_status(self):
         routes = route_map(parsed_server())
         expected_post_routes = {
@@ -108,6 +113,56 @@ class MoonAdvIntegrationTest(unittest.TestCase):
             callback = first.value.args[0]
             self.assertIsInstance(callback, ast.Attribute)
             self.assertEqual(callback.attr, update_name)
+
+    def test_safe_start_defaults_off_and_guards_startup_motion(self):
+        tree = parsed_server()
+        safe_flag = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "DEFINE_bool"
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "safe_start"
+        )
+        self.assertIs(safe_flag.args[1].value, False)
+
+        main = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        )
+        safe_branch = next(
+            node
+            for node in main.body
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Attribute)
+            and node.test.attr == "safe_start"
+        )
+        guard = safe_branch.orelse
+        guarded_calls = {
+            node.func.attr
+            for statement in guard
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        }
+        self.assertTrue(
+            {"start_impedance", "home_gripper", "update_configuration", "move"}
+            <= guarded_calls
+        )
+        self.assertEqual(
+            [
+                node.func.attr
+                for statement in safe_branch.body
+                for node in ast.walk(statement)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "robot_server"
+            ],
+            ["start_state_backend"],
+        )
 
     def test_main_owns_publisher_lifecycle_and_reports_real_entrypoint(self):
         tree = parsed_server()

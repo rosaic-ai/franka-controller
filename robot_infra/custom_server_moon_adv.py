@@ -90,6 +90,11 @@ flags.DEFINE_integer(
     200,
     "Franka UDP telemetry rate, 1-200 Hz",
 )
+flags.DEFINE_bool(
+    "safe_start",
+    False,
+    "Start HTTP/telemetry without controller, homing, gain, or pose commands",
+)
 
 JOINT_RESET_TARGET = [-0.07, -0.1, 0.0, -2.5, -0.1, 2.5, -0.6]
 
@@ -352,6 +357,8 @@ class FrankaServer:
     (as well as backup) joint recovery policy."""
 
     def __init__(self):
+        self.imp = None
+        self.backend = None
         self.telemetry_store = TelemetryStateStore()
         self.grippermovepub = rospy.Publisher(
             "/franka_gripper/move/goal", MoveActionGoal, queue_size=1
@@ -446,15 +453,32 @@ class FrankaServer:
         print("RESET DONE")
 
     def start_impedance(self):
-        self.imp = subprocess.Popen([
-            "roslaunch", "serl_franka_controllers", "impedance_gumi.launch",
+        if self.imp is not None and self.imp.poll() is None:
+            return False
+        command = (
+            ["rosrun", "controller_manager", "spawner", "cartesian_impedance_controller"]
+            if FLAGS.safe_start
+            else [
+                "roslaunch", "serl_franka_controllers", "impedance_gumi.launch",
+                "robot_ip:=" + FLAGS.robot_ip, "load_gripper:=true"
+            ]
+        )
+        self.imp = subprocess.Popen(command)
+        time.sleep(10)
+        return True
+
+    def start_state_backend(self):
+        self.backend = subprocess.Popen([
+            "roslaunch", "franka_control", "franka_control_gumi.launch",
             "robot_ip:=" + FLAGS.robot_ip, "load_gripper:=true"
         ])
-        time.sleep(10)
 
     def stop_impedance(self):
+        if self.imp is None or self.imp.poll() is not None:
+            return False
         self.imp.terminate()
         time.sleep(1)
+        return True
 
     def clear(self):
         msg = ErrorRecoveryActionGoal()
@@ -619,41 +643,43 @@ def main(_):
     atexit.register(telemetry_publisher.stop)
     server_commit = _read_server_commit()
     server_started_at = datetime.now(timezone.utc).astimezone().isoformat()
-    robot_server.start_impedance()
+    reconf_client = None
+    if FLAGS.safe_start:
+        robot_server.start_state_backend()
+    else:
+        robot_server.start_impedance()
+        robot_server.home_gripper()
+        time.sleep(5)
+        reconf_client = ReconfClient(
+            "/cartesian_impedance_controller/dynamic_reconfigure_compliance_param_node"
+        )
 
-    robot_server.home_gripper()
-    time.sleep(5)
+        # ======================================================================
+        # [INIT] Option MAX-A
+        # ======================================================================
+        _log_event("INIT", "Session dir: " + SESSION_DIR)
+        _log_event("INIT", "Applying MAX-A gains (K_t=1500, c_t=0.018, K_r=160, c_r=0.035, nullspace=5.0)")
+        reconf_client.update_configuration({"translational_stiffness": 1500})
+        reconf_client.update_configuration({"translational_damping": 77})
+        reconf_client.update_configuration({"rotational_stiffness": 160})
+        reconf_client.update_configuration({"rotational_damping": 8})
+        reconf_client.update_configuration({"nullspace_stiffness": 5.0})
+        reconf_client.update_configuration({"joint1_nullspace_stiffness": 10.0})
+        for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
+            reconf_client.update_configuration({"translational_clip_" + direction: 0.018})
+            reconf_client.update_configuration({"rotational_clip_" + direction: 0.035})
+        robot_server.move(robot_server.pos.tolist())
+        time.sleep(0.2)
+        reconf_client.update_configuration({"translational_Ki": 0})
+        reconf_client.update_configuration({"rotational_Ki": 0})
+        _log_event("INIT", "Impedance parameters reset complete (MAX-A)")
 
-    reconf_client = ReconfClient(
-        "/cartesian_impedance_controller/dynamic_reconfigure_compliance_param_node"
-    )
-
-    # ==========================================================================
-    # [INIT] Option MAX-A
-    # ==========================================================================
-    _log_event("INIT", "Session dir: " + SESSION_DIR)
-    _log_event("INIT", "Applying MAX-A gains (K_t=1500, c_t=0.018, K_r=160, c_r=0.035, nullspace=5.0)")
-    reconf_client.update_configuration({"translational_stiffness": 1500})
-    reconf_client.update_configuration({"translational_damping": 77})
-    reconf_client.update_configuration({"rotational_stiffness": 160})
-    reconf_client.update_configuration({"rotational_damping": 8})
-    reconf_client.update_configuration({"nullspace_stiffness": 5.0})
-    reconf_client.update_configuration({"joint1_nullspace_stiffness": 10.0})
-    for direction in ['x', 'y', 'z', 'neg_x', 'neg_y', 'neg_z']:
-        reconf_client.update_configuration({"translational_clip_" + direction: 0.018})
-        reconf_client.update_configuration({"rotational_clip_" + direction: 0.035})
-    robot_server.move(robot_server.pos.tolist())
-    time.sleep(0.2)
-    reconf_client.update_configuration({"translational_Ki": 0})
-    reconf_client.update_configuration({"rotational_Ki": 0})
-    _log_event("INIT", "Impedance parameters reset complete (MAX-A)")
-
-    # Capture baseline q for q_drift measurement
-    time.sleep(1)
-    global START_Q
-    START_Q = np.array(robot_server.q).copy()
-    _log_event("INIT", f"start_q captured: {START_Q.round(3).tolist()}")
-    _log_event("INIT", "q_drift = ‖current q − start_q‖  (hypothesis verification metric)")
+        # Capture baseline q for q_drift measurement
+        time.sleep(1)
+        global START_Q
+        START_Q = np.array(robot_server.q).copy()
+        _log_event("INIT", f"start_q captured: {START_Q.round(3).tolist()}")
+        _log_event("INIT", "q_drift = ‖current q − start_q‖  (hypothesis verification metric)")
 
     # Start STATUS thread
     threading.Thread(target=_status_thread_fn, args=(robot_server,), daemon=True).start()
@@ -665,15 +691,27 @@ def main(_):
 
     @webapp.route("/startimp", methods=["POST"])
     def start_impedance():
+        nonlocal reconf_client
+        global START_Q
         _log_event("CTRL", "/startimp called")
         robot_server.clear()
-        robot_server.start_impedance()
+        started = robot_server.start_impedance()
+        if FLAGS.safe_start and started:
+            robot_server.home_gripper()
+            time.sleep(5)
+            reconf_client = ReconfClient(
+                "/cartesian_impedance_controller/dynamic_reconfigure_compliance_param_node"
+            )
+            precision_mode()
+            START_Q = np.array(robot_server.q).copy()
         return "Started impedance"
 
     @webapp.route("/stopimp", methods=["POST"])
     def stop_impedance():
+        nonlocal reconf_client
         _log_event("CTRL", "/stopimp called")
         robot_server.stop_impedance()
+        reconf_client = None
         return "Stopped impedance"
 
     @webapp.route("/getpos", methods=["POST"])
