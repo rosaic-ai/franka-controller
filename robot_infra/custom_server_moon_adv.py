@@ -139,6 +139,8 @@ _event_counts = {
 # (CSV is also written, but in-memory list is the source of truth for summary)
 _status_samples = []
 _status_lock = threading.Lock()
+_shutdown_requested = threading.Event()
+_exit_code = 0
 
 
 def _log_event(tag, msg):
@@ -282,7 +284,21 @@ Pose markers:   pose_milestones.log
 
 
 def _shutdown_handler(*_):
-    raise SystemExit(0)
+    _shutdown_requested.set()
+    raise SystemExit(_exit_code)
+
+
+def _watch_backend(backend):
+    global _exit_code
+    returncode = backend.wait()
+    if _shutdown_requested.is_set():
+        return
+    _exit_code = 1
+    _log_event(
+        "BACKEND",
+        f"state backend exited with code {returncode}; restarting Gateway",
+    )
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 atexit.register(lambda: _write_summary(verbose=True, final=True))
@@ -646,6 +662,11 @@ def main(_):
     reconf_client = None
     if FLAGS.safe_start:
         robot_server.start_state_backend()
+        threading.Thread(
+            target=_watch_backend,
+            args=(robot_server.backend,),
+            daemon=True,
+        ).start()
     else:
         robot_server.start_impedance()
         robot_server.home_gripper()
