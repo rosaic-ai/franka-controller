@@ -258,6 +258,49 @@ class MoonAdvIntegrationTest(unittest.TestCase):
             min(controller_start_lines),
         )
 
+    def test_state_backend_exit_stops_gateway_for_systemd_restart(self):
+        tree = parsed_server()
+        methods = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+        watcher = methods["_watch_backend"]
+        watcher_calls = {
+            node.func.attr
+            for node in ast.walk(watcher)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        }
+        self.assertTrue({"wait", "is_set", "kill"} <= watcher_calls)
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Constant)
+                and node.value.value == 1
+                for node in ast.walk(watcher)
+            )
+        )
+
+        thread_targets = {
+            keyword.value.id
+            for node in ast.walk(methods["main"])
+            if isinstance(node, ast.Call)
+            for keyword in node.keywords
+            if keyword.arg == "target"
+            and isinstance(keyword.value, ast.Name)
+        }
+        self.assertIn("_watch_backend", thread_targets)
+
+        handler = methods["_shutdown_handler"]
+        exit_raise = next(
+            node
+            for node in ast.walk(handler)
+            if isinstance(node, ast.Raise)
+        )
+        self.assertIsInstance(exit_raise.exc.args[0], ast.Name)
+        self.assertEqual(exit_raise.exc.args[0].id, "_exit_code")
+
 
 if __name__ == "__main__":
     unittest.main()
